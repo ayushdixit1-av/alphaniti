@@ -1511,6 +1511,280 @@
       box-shadow: 0 0 8px rgba(0, 229, 153, 0.25);
     }
 
+  
+    /* ==========================================================================
+       WORKSPACE TOP CONTEXT BAR (48px fixed height)
+       ========================================================================== */
+    .ws-top-bar {
+      height: 48px;
+      background: var(--bg-sidebar);
+      border-bottom: 1px solid var(--border-subtle);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 16px;
+      flex-shrink: 0;
+      z-index: 40;
+      gap: 12px;
+    }
+    .ws-top-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .rail-toggle-btn {
+      background: transparent;
+      border: 1px solid var(--border-subtle);
+      border-radius: 4px;
+      color: var(--text-secondary);
+      cursor: pointer;
+      padding: 4px 8px;
+      font-size: 13px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.12s ease;
+    }
+    .rail-toggle-btn:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--border-strong);
+    }
+    .ws-brand-title {
+      font-size: 18px;
+      font-weight: 500;
+      color: var(--text-primary);
+      display: flex;
+      align-items: baseline;
+      gap: 6px;
+      cursor: pointer;
+    }
+    .ws-brand-badge {
+      font-family: 'IBM Plex Mono', monospace;
+      font-size: 10px;
+      color: var(--accent);
+      background: rgba(166, 92, 66, 0.12);
+      padding: 1px 5px;
+      border-radius: 3px;
+    }
+    .ws-hud-selector {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border-subtle);
+      border-radius: 5px;
+      padding: 4px 10px;
+      cursor: pointer;
+      font-size: 12px;
+      transition: border-color 0.12s;
+    }
+    .ws-hud-selector:hover {
+      border-color: var(--border-strong);
+    }
+    .ws-hud-symbol {
+      font-weight: 700;
+      color: var(--text-primary);
+    }
+    .ws-hud-price {
+      color: var(--text-secondary);
+    }
+    .ws-hud-keycap {
+      font-size: 9.5px;
+      background: var(--bg-hover);
+      padding: 1px 4px;
+      border-radius: 3px;
+      border: 1px solid var(--border-subtle);
+      color: var(--text-muted);
+    }
+    .ws-top-center {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .ws-horizon-toggle {
+      display: flex;
+      background: var(--bg-hover);
+      padding: 2px;
+      border-radius: 4px;
+      border: 1px solid var(--border-subtle);
+    }
+    .ws-hz-btn {
+      background: transparent;
+      border: none;
+      font-size: 10.5px;
+      font-weight: 600;
+      padding: 3px 8px;
+      border-radius: 3px;
+      color: var(--text-muted);
+      cursor: pointer;
+      font-family: 'IBM Plex Mono', monospace;
+    }
+    .ws-hz-btn.active {
+      background: var(--bg-elevated);
+      color: var(--accent);
+      box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+    }
+    .ws-top-right {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+
+    /* 210px COLLAPSIBLE LEFT RAIL */
+    .ws-rail {
+      width: 210px;
+      background: var(--bg-sidebar);
+      border-right: 1px solid var(--border-subtle);
+      display: flex;
+      flex-direction: column;
+      flex-shrink: 0;
+      transition: width 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+      z-index: 30;
+      overflow: hidden;
+    }
+    .ws-rail.collapsed {
+      width: 54px;
+    }
+    .rail-modules-list {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      padding: 10px 8px;
+      border-bottom: 1px solid var(--border-subtle);
+    }
+    .rail-mod-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 7px 10px;
+      border-radius: 5px;
+      color: var(--text-secondary);
+      font-size: 12px;
+      cursor: pointer;
+      transition: background 0.12s, color 0.12s;
+      white-space: nowrap;
+    }
+    .rail-mod-item:hover, .rail-mod-item.active {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+    }
+    .rail-mod-item.active {
+      font-weight: 600;
+      border-left: 2px solid var(--accent);
+    }
+    .rail-mod-icon {
+      font-size: 14px;
+      min-width: 18px;
+      text-align: center;
+      color: var(--accent);
+    }
+    .ws-rail.collapsed .rail-mod-title {
+      display: none;
+    }
+    .ws-rail.collapsed .section-label, .ws-rail.collapsed #sidebar-watchlist {
+      display: none;
+    }
+
+    /* THREE-LEVEL PROGRESSIVE DISCLOSURE TABS */
+    .disclosure-level-bar {
+      display: flex;
+      background: rgba(0,0,0,0.25);
+      border-bottom: 1px solid var(--border-subtle);
+      padding: 6px 12px;
+      gap: 4px;
+    }
+    .level-tab-btn {
+      flex: 1;
+      padding: 6px 8px;
+      border-radius: 4px;
+      border: 1px solid transparent;
+      background: transparent;
+      font-size: 11px;
+      font-weight: 600;
+      color: var(--text-muted);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+    .level-tab-btn:hover {
+      color: var(--text-primary);
+      background: var(--bg-hover);
+    }
+    .level-tab-btn.active {
+      background: var(--bg-elevated);
+      color: var(--accent);
+      border-color: var(--border-subtle);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.2);
+    }
+    .level-badge {
+      font-size: 9px;
+      padding: 1px 4px;
+      border-radius: 2px;
+      background: rgba(255,255,255,0.06);
+    }
+
+    /* GLOBAL QUICK-SEARCH MODAL (/) */
+    .global-search-backdrop {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      backdrop-filter: blur(4px);
+      z-index: 100;
+      display: flex;
+      align-items: flex-start;
+      justify-content: center;
+      padding-top: 12vh;
+    }
+    .global-search-modal {
+      width: 580px;
+      max-width: 90vw;
+      background: var(--bg-main);
+      border: 1px solid var(--border-strong);
+      border-radius: 8px;
+      box-shadow: 0 16px 48px rgba(0,0,0,0.5);
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+    .search-input-wrap {
+      display: flex;
+      align-items: center;
+      padding: 12px 16px;
+      border-bottom: 1px solid var(--border-subtle);
+      gap: 10px;
+    }
+    .search-input-wrap input {
+      flex: 1;
+      background: transparent;
+      border: none;
+      color: var(--text-primary);
+      font-family: inherit;
+      font-size: 15px;
+      outline: none;
+    }
+    .search-results-list {
+      max-height: 360px;
+      overflow-y: auto;
+      padding: 6px;
+    }
+    .search-res-item {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 12px;
+      border-radius: 5px;
+      cursor: pointer;
+      font-size: 12.5px;
+      transition: background 0.1s;
+    }
+    .search-res-item:hover, .search-res-item.selected {
+      background: var(--bg-hover);
+    }
+
   </style>
 </head>
 <body>
@@ -1906,68 +2180,106 @@
   <!-- ========================================================================
        VIEW 2: RESEARCH & EXECUTION WORKSPACE (ORIGINAL INTERFACE)
        ======================================================================== -->
-  <div id="view-research">
-    <!-- LEFT SIDEBAR -->
-    <aside class="sidebar" id="sidebar">
-      <div class="sidebar-top">
-        <div class="brand-row">
-          <div class="brand-title serif" onclick="showCover()" title="Return to Cover Sheet">
-            <span>AlphaNiti</span>
-            <span class="brand-version">v25.0</span>
-          </div>
-          <div style="display:flex; align-items:center; gap:6px;">
-            <button class="text-btn" onclick="showCover()">Cover</button>
-            <button class="text-btn" onclick="toggleTheme()" id="theme-btn">Light</button>
-          </div>
+  <div id="view-research" style="flex-direction:column;">
+    <!-- 48px FIXED TOP CONTEXT BAR -->
+    <header class="ws-top-bar mono">
+      <div class="ws-top-left">
+        <button class="rail-toggle-btn" onclick="toggleRail()" title="Toggle Navigation Rail (Ctrl+B)">
+          <span>☰</span>
+        </button>
+        <div class="ws-brand-title serif" onclick="showCover()" title="Return to Editorial Cover Sheet">
+          <span>AlphaNiti</span>
+          <span class="ws-brand-badge mono">v25.0</span>
         </div>
+        <div class="ws-hud-selector" onclick="openGlobalSearch()" title="Search 52 Nifty Equities (Press /)">
+          <span class="ws-hud-symbol" id="ws-hud-sym">NSE:SBIN</span>
+          <span class="ws-hud-price" id="ws-hud-px">₹958.60 (-1.18%)</span>
+          <span class="ws-hud-keycap">/</span>
+        </div>
+      </div>
 
-        <button class="new-session-btn" onclick="resetConversation()">
-          <span>New Research Session</span>
-          <span class="mono" style="color:var(--text-muted);">+</span>
+      <div class="ws-top-center">
+        <span id="header-regime-pill" class="regime-tag cash mono">REGIME: CASH PRESERVATION</span>
+        <div class="ws-horizon-toggle">
+          <button class="ws-hz-btn active" id="btn-hz-20" onclick="setHorizon(20)">20D Cone</button>
+          <button class="ws-hz-btn" id="btn-hz-60" onclick="setHorizon(60)">60D Cone</button>
+        </div>
+        <span class="mono" style="font-size:11px; color:var(--text-muted);">Cutoff: <b id="ws-cutoff-date" style="color:var(--text-secondary);">2026-10-29</b></span>
+      </div>
+
+      <div class="ws-top-right">
+        <button class="text-btn" onclick="showCover()">Cover</button>
+        <button class="text-btn" onclick="toggleTheme()" id="theme-btn">Light</button>
+        <button class="rail-toggle-btn" onclick="toggleArtifactPanel()" title="Toggle Inspector Drawer (◨)">
+          <span>◨</span>
         </button>
       </div>
+    </header>
 
-      <div class="section-label">Queries</div>
-      <div class="sidebar-scroll">
-        <div class="nav-item" onclick="askBrain('Should I buy RELIANCE right now with ₹1,00,000?')">
-          <span>RELIANCE — ₹1,00,000 Evaluation</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('Compare TCS and INFY using live NSE data')">
-          <span>TCS vs INFY — Relative Comparison</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('Where should I invest ₹2,50,000 today?')">
-          <span>Portfolio Allocation — ₹2,50,000</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('Analyze SUNPHARMA.NS live with my ML brain')">
-          <span>SUNPHARMA.NS — Live Inference</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('Analyze TATAMOTORS.NS with ₹1,50,000')">
-          <span>TATAMOTORS.NS — Live Inference</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('Analyze ZOMATO.NS live with my ML brain')">
-          <span>ZOMATO.NS — Live Inference</span>
-        </div>
-        <div class="nav-item" onclick="askBrain('What is the market regime and crash probability today?')">
-          <span>Macro Regime &amp; Cash Gate</span>
+    <!-- MAIN BODY SPLIT: 210px RAIL + CENTER WORKSPACE + RIGHT INSPECTOR -->
+    <div style="display:flex; flex:1; overflow:hidden; width:100%;">
+      <!-- 210px COLLAPSIBLE LEFT RAIL -->
+      <aside class="ws-rail" id="ws-rail">
+        <div class="rail-modules-list">
+          <div class="rail-mod-item active" onclick="switchResearchModule('overview')">
+            <span class="rail-mod-icon">◈</span>
+            <span class="rail-mod-title">Overview</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('screener')">
+            <span class="rail-mod-icon">☷</span>
+            <span class="rail-mod-title">Screener (52)</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('company')">
+            <span class="rail-mod-icon">◇</span>
+            <span class="rail-mod-title">Company Research</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('forecast')">
+            <span class="rail-mod-icon">∫</span>
+            <span class="rail-mod-title">Forecast Lab</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('risk')">
+            <span class="rail-mod-icon">∇</span>
+            <span class="rail-mod-title">Risk &amp; DRO</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('portfolio')">
+            <span class="rail-mod-icon">⊞</span>
+            <span class="rail-mod-title">Portfolio Sizer</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('safety')">
+            <span class="rail-mod-icon">⌁</span>
+            <span class="rail-mod-title">Safety Enclave</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('validation')">
+            <span class="rail-mod-icon">⋈</span>
+            <span class="rail-mod-title">Validation Audit</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('ledger')">
+            <span class="rail-mod-icon">≡</span>
+            <span class="rail-mod-title">Conserved Ledger</span>
+          </div>
+          <div class="rail-mod-item" onclick="switchResearchModule('governance')">
+            <span class="rail-mod-icon">⊕</span>
+            <span class="rail-mod-title">Governance &amp; OTR</span>
+          </div>
         </div>
 
-        <div class="section-label" style="padding-left:8px; margin-top:8px;">NIFTY 50 UNIVERSE (<span id="sidebar-eq-count">52</span>)</div>
-        <div id="sidebar-watchlist"></div>
-      </div>
+        <div class="section-label" style="padding-top:10px;">Watchlist (<span id="sidebar-eq-count">52</span>)</div>
+        <div class="sidebar-scroll" style="flex:1;">
+          <div id="sidebar-watchlist"></div>
+        </div>
 
-      <div class="sidebar-footer">
-        <div class="status-row" onclick="syncWithRender()" title="Refresh connection to Render backend">
-          <div style="display:flex; align-items:center; gap:8px;">
-            <div id="api-dot" class="status-indicator"></div>
-            <div>
-              <div style="font-weight:500;" id="api-label">Render Engine Connected</div>
-              <div class="mono" style="font-size:10px; color:var(--text-muted);">alphaniti-v25-api.onrender.com</div>
+        <div class="sidebar-footer">
+          <div class="status-row" onclick="syncWithRender()" title="Refresh connection to Render backend">
+            <div style="display:flex; align-items:center; gap:8px;">
+              <div id="api-dot" class="status-indicator"></div>
+              <div>
+                <div style="font-weight:500; font-size:11px;" id="api-label">Render Connected</div>
+                <div class="mono" style="font-size:9.5px; color:var(--text-muted);">alphaniti-v25-api.onrender.com</div>
+              </div>
             </div>
           </div>
-          <span class="mono" style="color:var(--text-muted); font-size:11px;">Sync</span>
         </div>
-      </div>
-    </aside>
+      </aside>
 
     <!-- CENTER CONVERSATION STAGE -->
     <main class="main-stage">
@@ -2052,15 +2364,57 @@
           <div style="font-weight:600; font-size:12.5px;" id="art-title">NSE:SBIN</div>
           <div class="mono" style="font-size:10.5px; color:var(--text-muted);" id="art-subtitle">120D OHLCV &amp; 20D Conformal Forecast (q̂=1.3644)</div>
         </div>
-        <button class="text-btn" onclick="toggleArtifactPanel()">Close</button>
+        <button class="text-btn" onclick="toggleArtifactPanel()">Close (◨)</button>
       </div>
 
-      <div class="panel-tabs">
-        <div class="ptab active" id="atab-btn-chart" onclick="switchArtifactTab('chart')">Chart &amp; Forecast</div>
-        <div class="ptab" id="atab-btn-brain" onclick="switchArtifactTab('brain')">Ensemble &amp; Features</div>
-        <div class="ptab" id="atab-btn-ledger" onclick="switchArtifactTab('ledger')">Ledger &amp; Allocation</div>
-        <div class="ptab" id="atab-btn-audit" onclick="switchArtifactTab('audit')">2-Year Audit</div>
+      <!-- THREE-LEVEL PROGRESSIVE DISCLOSURE TABS -->
+      <div class="disclosure-level-bar mono">
+        <button class="level-tab-btn active" id="btn-lvl-1" onclick="switchDisclosureLevel(1)">
+          <span>Level 1</span>
+          <span class="level-badge">Plain English</span>
+        </button>
+        <button class="level-tab-btn" id="btn-lvl-2" onclick="switchDisclosureLevel(2)">
+          <span>Level 2</span>
+          <span class="level-badge">Deep Math</span>
+        </button>
+        <button class="level-tab-btn" id="btn-lvl-3" onclick="switchDisclosureLevel(3)">
+          <span>Level 3</span>
+          <span class="level-badge">Raw JSON</span>
+        </button>
       </div>
+
+      <!-- LEVEL 1 CONTAINER (PLAIN ENGLISH GUIDE FOR EVERYONE) -->
+      <div class="panel-body" id="level-container-1" style="display:flex; flex-direction:column; gap:12px; padding:14px;">
+        <div class="rationale-card layman-card" style="border-left:3px solid #34735F;">
+          <div class="rat-card-head">
+            <span class="rat-card-title" style="color:var(--positive);">🌱 WHAT THIS MEANS FOR YOUR MONEY</span>
+            <span class="rat-card-chip">Zero Jargon</span>
+          </div>
+          <div id="inspector-l1-prose" style="font-size:12px; color:var(--text-secondary); line-height:1.55;">
+            Select any stock to view everyday guidance on trend, safety, and action.
+          </div>
+        </div>
+
+        <div class="kpi-grid">
+          <div class="kpi-card">
+            <div class="kpi-lbl">Overall Investment Health</div>
+            <div class="kpi-val mono" id="l1-health-score" style="color:var(--accent);">-- / 100</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-lbl">AI Self-Doubt</div>
+            <div class="kpi-val mono" id="l1-doubt-score">Low</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- LEVEL 2 CONTAINER (EXACT NUMBERS & PARAMETERS) -->
+      <div class="panel-body" id="level-container-2" style="display:none; flex-direction:column;">
+        <div class="panel-tabs">
+          <div class="ptab active" id="atab-btn-chart" onclick="switchArtifactTab('chart')">Chart &amp; Forecast</div>
+          <div class="ptab" id="atab-btn-brain" onclick="switchArtifactTab('brain')">Ensemble &amp; Features</div>
+          <div class="ptab" id="atab-btn-ledger" onclick="switchArtifactTab('ledger')">Ledger &amp; Allocation</div>
+          <div class="ptab" id="atab-btn-audit" onclick="switchArtifactTab('audit')">2-Year Audit</div>
+        </div>
 
       <!-- TAB 1: CHART -->
       <div class="panel-body" id="atab-chart">
@@ -2207,8 +2561,22 @@
           </tbody>
         </table>
       </div>
+      </div> <!-- #level-container-2 end -->
+
+      <!-- LEVEL 3 CONTAINER (FULL RESEARCH RECORD & MACHINE AUDIT) -->
+      <div class="panel-body" id="level-container-3" style="display:none; flex-direction:column; padding:12px; flex:1;">
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:8px;">
+          <span class="mono" style="font-size:11px; color:var(--text-muted);">Unrounded JSON Telemetry Record</span>
+          <div style="display:flex; gap:6px;">
+            <button class="text-btn" onclick="copyLevel3Json()" style="font-size:11px;">Copy JSON</button>
+            <button class="text-btn" onclick="exportLevel3Json()" style="font-size:11px;">Export File</button>
+          </div>
+        </div>
+        <pre class="mono" id="level3-json-pre" style="flex:1; background:rgba(0,0,0,0.35); border:1px solid var(--border-subtle); border-radius:6px; padding:10px; font-size:10.5px; color:var(--text-secondary); overflow:auto; white-space:pre-wrap; word-break:break-all;"></pre>
+      </div>
     </aside>
-  </div>
+    </div> <!-- inner horizontal flex -->
+  </div> <!-- #view-research -->
 
   <script>
     const API_BASE = window.location.hostname.includes('onrender.com')
@@ -2766,6 +3134,38 @@
 
       document.getElementById('art-title').innerText = `NSE:${sym} — ${sector}`;
       document.getElementById('art-subtitle').innerText = `120D OHLCV & 20D Conformal Forecast (q̂=1.3644)`;
+
+      // Update 48px Top Bar HUD
+      const hudSym = document.getElementById('ws-hud-sym');
+      const hudPx = document.getElementById('ws-hud-px');
+      if (hudSym) hudSym.innerText = `NSE:${sym}`;
+      if (hudPx && last) {
+        const chg = sig.change_1d_pct !== undefined ? sig.change_1d_pct : 0;
+        hudPx.innerHTML = `₹${last.close.toFixed(2)} <span style="color:${chg>=0?'var(--positive)':'var(--negative)'}; font-size:11px;">(${chg>=0?'+':''}${chg.toFixed(2)}%)</span>`;
+      }
+
+      // Populate Level 1 Plain-English Summary Box
+      const l1Prose = document.getElementById('inspector-l1-prose');
+      const l1Health = document.getElementById('l1-health-score');
+      const l1Doubt = document.getElementById('l1-doubt-score');
+      if (l1Prose) {
+        const lBullets = generateLaymanRationale(sig);
+        l1Prose.innerHTML = lBullets.map(b => `<div style="margin-bottom:6px;">• ${b}</div>`).join('');
+      }
+      if (l1Health) {
+        const sVal = sig.composite_score !== undefined ? sig.composite_score.toFixed(1) : '0.0';
+        l1Health.innerText = `${sVal} / 100`;
+      }
+      if (l1Doubt) {
+        const epi = sig.epistemic_uncertainty || 0.05;
+        l1Doubt.innerText = epi > 0.06 ? 'Elevated (Turbulent)' : 'Low (Reliable Pattern)';
+        l1Doubt.style.color = epi > 0.06 ? 'var(--warning)' : 'var(--positive)';
+      }
+
+      // Update Level 3 JSON if tab is currently open
+      if (CURRENT_DISCLOSURE_LEVEL === 3) {
+        populateLevel3Json(sym);
+      }
 
       const chg = sig.change_1d_pct !== undefined ? sig.change_1d_pct : 0;
       const chgCol = chg >= 0 ? 'var(--positive)' : 'var(--negative)';
@@ -3668,7 +4068,170 @@
     }
     window.addEventListener('hashchange', checkUrlHash);
 
+    
+    // ==========================================================================
+    // WORKSPACE NAVIGATION, RAIL, & THREE-LEVEL DISCLOSURE ENGINE
+    // ==========================================================================
+    function toggleRail() {
+      const rail = document.getElementById('ws-rail');
+      if (rail) rail.classList.toggle('collapsed');
+      setTimeout(resizeCharts, 220);
+    }
+
+    function switchResearchModule(mod) {
+      document.querySelectorAll('.rail-mod-item').forEach(el => {
+        el.classList.toggle('active', el.innerText.toLowerCase().includes(mod));
+      });
+      if (mod === 'screener') {
+        showCover();
+        const dirEl = document.getElementById('cover-directory-section');
+        if (dirEl) dirEl.scrollIntoView({ behavior: 'smooth' });
+      } else if (mod === 'forecast') {
+        document.getElementById('artifact-panel').classList.remove('closed');
+        switchDisclosureLevel(2);
+        switchArtifactTab('chart');
+      } else if (mod === 'company') {
+        document.getElementById('artifact-panel').classList.remove('closed');
+        switchDisclosureLevel(2);
+        switchArtifactTab('brain');
+      } else if (mod === 'portfolio' || mod === 'ledger') {
+        document.getElementById('artifact-panel').classList.remove('closed');
+        switchDisclosureLevel(2);
+        switchArtifactTab('ledger');
+      } else if (mod === 'validation') {
+        document.getElementById('artifact-panel').classList.remove('closed');
+        switchDisclosureLevel(2);
+        switchArtifactTab('audit');
+      } else {
+        document.getElementById('artifact-panel').classList.remove('closed');
+        switchDisclosureLevel(1);
+      }
+    }
+
+    function setHorizon(days) {
+      document.getElementById('btn-hz-20').classList.toggle('active', days === 20);
+      document.getElementById('btn-hz-60').classList.toggle('active', days === 60);
+      // Trigger chart re-render with target horizon
+      loadChartForSymbol(CURRENT_SYMBOL);
+    }
+
+    // Three-Level Progressive Disclosure Switcher
+    let CURRENT_DISCLOSURE_LEVEL = 1;
+    function switchDisclosureLevel(lvl) {
+      CURRENT_DISCLOSURE_LEVEL = lvl;
+      [1, 2, 3].forEach(l => {
+        const btn = document.getElementById('btn-lvl-' + l);
+        const box = document.getElementById('level-container-' + l);
+        if (btn) btn.classList.toggle('active', l === lvl);
+        if (box) box.style.display = (l === lvl) ? 'flex' : 'none';
+      });
+      if (lvl === 3) populateLevel3Json(CURRENT_SYMBOL);
+      if (lvl === 2) setTimeout(resizeCharts, 40);
+    }
+
+    function populateLevel3Json(sym) {
+      const sig = getSignalForSymbol(sym);
+      const pre = document.getElementById('level3-json-pre');
+      if (pre) {
+        pre.innerText = JSON.stringify(sig, null, 2);
+      }
+    }
+
+    function copyLevel3Json() {
+      const pre = document.getElementById('level3-json-pre');
+      if (pre && navigator.clipboard) {
+        navigator.clipboard.writeText(pre.innerText);
+        alert('Copied Level 3 research record JSON to clipboard!');
+      }
+    }
+
+    function exportLevel3Json() {
+      const pre = document.getElementById('level3-json-pre');
+      if (!pre) return;
+      const blob = new Blob([pre.innerText], { type: 'application/json' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = `alphaniti_${CURRENT_SYMBOL}_research_record.json`;
+      a.click();
+    }
+
+    // Global Search Modal Engine
+    function openGlobalSearch() {
+      const m = document.getElementById('global-search-modal');
+      const inp = document.getElementById('global-search-inp');
+      if (m && inp) {
+        m.style.display = 'flex';
+        inp.value = '';
+        inp.focus();
+        handleGlobalSearch('');
+      }
+    }
+
+    function closeGlobalSearch() {
+      const m = document.getElementById('global-search-modal');
+      if (m) m.style.display = 'none';
+    }
+
+    function handleGlobalSearch(query) {
+      const resEl = document.getElementById('global-search-results');
+      if (!resEl || !SIGNALS || !SIGNALS.length) return;
+      const q = query.toLowerCase().trim();
+      const filtered = SIGNALS.filter(s => {
+        if (!q) return true;
+        return (s.symbol && s.symbol.toLowerCase().includes(q)) || (s.sector && s.sector.toLowerCase().includes(q));
+      });
+      resEl.innerHTML = filtered.slice(0, 15).map(s => {
+        const col = s.predicted_return_pct >= 0 ? 'var(--positive)' : 'var(--negative)';
+        return `
+          <div class="search-res-item mono" onclick="selectSecurityFromSearch('${s.symbol}')">
+            <div>
+              <b style="color:var(--text-primary); font-size:13px;">${s.symbol}</b>
+              <span style="color:var(--text-muted); font-size:11px; margin-left:8px;">${s.sector || 'Large Cap'}</span>
+            </div>
+            <div style="text-align:right;">
+              <span>₹${s.close_price.toFixed(2)}</span>
+              <span style="color:${col}; margin-left:8px; font-weight:600;">${s.predicted_return_pct >= 0 ? '+' : ''}${s.predicted_return_pct.toFixed(2)}%</span>
+            </div>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function selectSecurityFromSearch(sym) {
+      closeGlobalSearch();
+      selectCoverSymbol(sym);
+      enterWithSymbol(sym);
+    }
+
+    // Keyboard Shortcuts (/ for search, Ctrl+B for rail, Esc to close)
+    window.addEventListener('keydown', (e) => {
+      if (e.key === '/' && document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        openGlobalSearch();
+      } else if (e.key === 'b' && (e.ctrlKey || e.metaKey)) {
+        e.preventDefault();
+        toggleRail();
+      } else if (e.key === 'Escape') {
+        closeGlobalSearch();
+      }
+    });
+
     window.addEventListener('DOMContentLoaded', bootApp);
   </script>
+
+  <!-- GLOBAL QUICK-SEARCH MODAL (/) -->
+  <div class="global-search-backdrop" id="global-search-modal" style="display:none;" onclick="if(event.target===this) closeGlobalSearch();">
+    <div class="global-search-modal">
+      <div class="search-input-wrap">
+        <span class="mono" style="color:var(--accent);">🔍</span>
+        <input type="text" id="global-search-inp" placeholder="Search 52 Nifty Equities by Ticker or Sector (Press Esc to close)..." oninput="handleGlobalSearch(this.value)" />
+        <span class="mono" style="font-size:10px; color:var(--text-muted); background:var(--bg-hover); padding:2px 6px; border-radius:3px;">ESC</span>
+      </div>
+      <div class="search-results-list" id="global-search-results">
+        <!-- Dynamically populated -->
+      </div>
+    </div>
+  </div>
+
 </body>
 </html>
