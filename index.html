@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="dark">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -2597,13 +2597,37 @@
 
     function toggleTheme() {
       const root = document.documentElement;
-      const next = root.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
+      const cur = root.getAttribute('data-theme') || 'light';
+      const next = cur === 'dark' ? 'light' : 'dark';
       root.setAttribute('data-theme', next);
       const label = next === 'dark' ? 'Light' : 'Dark';
       const b1 = document.getElementById('theme-btn');
       const b2 = document.getElementById('cover-theme-btn');
       if (b1) b1.innerText = label;
       if (b2) b2.innerText = label;
+
+      // Update LightweightCharts palette
+      const isDark = next === 'dark';
+      const chartBg = isDark ? '#141716' : '#FAF8F3';
+      const textColor = isDark ? '#A3A7A4' : '#68716E';
+      const gridColor = isDark ? '#1E2322' : 'rgba(34, 43, 42, 0.06)';
+
+      const chartOpts = {
+        layout: { background: { type: 'solid', color: chartBg }, textColor: textColor },
+        grid: { vertLines: { color: gridColor }, horzLines: { color: gridColor } }
+      };
+
+      if (coverChart) coverChart.applyOptions(chartOpts);
+      if (coverRsiChart) coverRsiChart.applyOptions(chartOpts);
+      if (mainChart) mainChart.applyOptions(chartOpts);
+      if (rsiChart) rsiChart.applyOptions(chartOpts);
+
+      // Re-render mathematical canvas studio if active
+      if (typeof renderEvidentialCanvas === 'function') {
+        if (CURRENT_MATH_VIEW === 'evidential') renderEvidentialCanvas(CURRENT_SYMBOL);
+        else if (CURRENT_MATH_VIEW === 'tail') renderTailHazardCanvas(CURRENT_SYMBOL);
+        else if (CURRENT_MATH_VIEW === 'score') renderScoreMathCanvas(CURRENT_SYMBOL);
+      }
     }
 
     function enterWorkspace() {
@@ -2661,9 +2685,10 @@
       const cMain = document.getElementById('cover-main-chart');
       const cRsi = document.getElementById('cover-rsi-chart');
 
+      const isDk = document.documentElement.getAttribute('data-theme') === 'dark';
       coverChart = LightweightCharts.createChart(cMain, {
-        layout: { background: { type: 'solid', color: '#131722' }, textColor: '#A19F99', fontSize: 11 },
-        grid: { vertLines: { color: '#1C1F2B' }, horzLines: { color: '#1C1F2B' } },
+        layout: { background: { type: 'solid', color: isDk ? '#141716' : '#FAF8F3' }, textColor: isDk ? '#A3A7A4' : '#68716E', fontSize: 11 },
+        grid: { vertLines: { color: isDk ? '#1E2322' : 'rgba(34, 43, 42, 0.06)' }, horzLines: { color: isDk ? '#1E2322' : 'rgba(34, 43, 42, 0.06)' } },
         rightPriceScale: { borderColor: '#2A2E39', scaleMargins: { top: 0.12, bottom: 0.2 } },
         timeScale: { borderColor: '#2A2E39', timeVisible: true, rightOffset: 18 },
       });
@@ -2713,9 +2738,10 @@
       const mainEl = document.getElementById('tv-main-chart');
       const rsiEl = document.getElementById('tv-rsi-chart');
 
+      const isDkMain = document.documentElement.getAttribute('data-theme') === 'dark';
       mainChart = LightweightCharts.createChart(mainEl, {
-        layout: { background: { type: 'solid', color: '#131722' }, textColor: '#d1d4dc', fontSize: 11 },
-        grid: { vertLines: { color: '#1e222d' }, horzLines: { color: '#1e222d' } },
+        layout: { background: { type: 'solid', color: isDkMain ? '#141716' : '#FAF8F3' }, textColor: isDkMain ? '#A3A7A4' : '#68716E', fontSize: 11 },
+        grid: { vertLines: { color: isDkMain ? '#1E2322' : 'rgba(34, 43, 42, 0.06)' }, horzLines: { color: isDkMain ? '#1E2322' : 'rgba(34, 43, 42, 0.06)' } },
         rightPriceScale: { borderColor: '#2a2e39', scaleMargins: { top: 0.1, bottom: 0.2 } },
         timeScale: { borderColor: '#2a2e39', timeVisible: true, rightOffset: 18 },
       });
