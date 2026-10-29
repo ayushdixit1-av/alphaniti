@@ -2199,7 +2199,7 @@
       </div>
 
       <div class="ws-top-center">
-        <span id="header-regime-pill" class="regime-tag cash mono">REGIME: CASH PRESERVATION</span>
+        <span id="ws-header-regime-pill" class="regime-tag cash mono">REGIME: CASH PRESERVATION</span>
         <div class="ws-horizon-toggle">
           <button class="ws-hz-btn active" id="btn-hz-20" onclick="setHorizon(20)">20D Cone</button>
           <button class="ws-hz-btn" id="btn-hz-60" onclick="setHorizon(60)">60D Cone</button>
@@ -2285,7 +2285,7 @@
     <main class="main-stage">
       <header class="topbar">
         <div class="topbar-left">
-          <button class="text-btn" onclick="document.getElementById('sidebar').classList.toggle('collapsed')">Menu</button>
+          <button class="text-btn" onclick="toggleRail()">Menu</button>
           <button class="text-btn" onclick="showCover()">← Cover Sheet</button>
           <span style="font-weight:500; font-size:12.5px; color:var(--text-primary);">Evidential Deep Ensemble</span>
           <span class="mono" style="font-size:11px; color:var(--text-muted);">3-Member GRU · 20 Causal Features · NSE</span>
@@ -2826,7 +2826,7 @@
             renderArtifactChart(CURRENT_SYMBOL, SNAPSHOT.charts[CURRENT_SYMBOL]);
           }
         }
-      } catch (e) {}
+      } catch (e) { console.warn('AlphaNiti diagnostic:', e); }
 
       setTimeout(resizeCoverCharts, 60);
       await syncWithRender();
@@ -2864,18 +2864,42 @@
           sorted.map(s => `<option value="${s.symbol}" ${s.symbol === CURRENT_SYMBOL ? 'selected' : ''}>${s.symbol} — ₹${s.close_price.toFixed(1)} (${s.predicted_return_pct >= 0 ? '+' : ''}${s.predicted_return_pct.toFixed(1)}%)</option>`).join('');
       }
 
-      const isCash = payload.regime === 'CASH_PRESERVATION';
-      const pill = document.getElementById('header-regime-pill');
-      pill.className = 'regime-tag ' + (isCash ? 'cash' : 'riskon');
-      document.getElementById('regime-title').innerText = isCash ? 'REGIME: CASH PRESERVATION' : 'REGIME: RISK-ON';
-      document.getElementById('regime-sub').innerText = `| Drift: ${payload.market_expected_drift_pct >= 0 ? '+' : ''}${payload.market_expected_drift_pct}% | P_breach: ${(payload.market_average_crash_probability * 100).toFixed(1)}%`;
+      const reg = payload.regime || 'SOFT_BUY_FREEZE';
+      let regLabel = 'REGIME: RISK-ON';
+      let regClass = 'riskon';
+      if (reg === 'CASH_PRESERVATION') {
+        regLabel = 'REGIME: CASH PRESERVATION (0.00x)';
+        regClass = 'cash';
+      } else if (reg === 'HARD_BUY_FREEZE') {
+        regLabel = 'REGIME: HARD BUY-FREEZE (0.00x)';
+        regClass = 'cash';
+      } else if (reg === 'SOFT_BUY_FREEZE') {
+        regLabel = 'REGIME: SOFT BUY-FREEZE (0.75x)';
+        regClass = 'cash';
+      }
+
+      const pbAvg = (payload.market_average_crash_probability * 100).toFixed(1);
+      const mDrift = `${payload.market_expected_drift_pct >= 0 ? '+' : ''}${payload.market_expected_drift_pct}%`;
+
+      const pill1 = document.getElementById('header-regime-pill');
+      if (pill1) {
+        pill1.className = 'regime-tag ' + regClass;
+        const t = document.getElementById('regime-title');
+        const s = document.getElementById('regime-sub');
+        if (t) t.innerText = regLabel;
+        if (s) s.innerText = `| Drift: ${mDrift} | P_breach: ${pbAvg}%`;
+      }
+
+      const pillTop = document.getElementById('ws-header-regime-pill');
+      if (pillTop) {
+        pillTop.className = 'regime-tag mono ' + regClass;
+        pillTop.innerText = `${regLabel} · ${pbAvg}% P_b`;
+      }
 
       const coverBadge = document.getElementById('cover-regime-badge');
       if (coverBadge) {
-        coverBadge.className = 'regime-tag mono ' + (isCash ? 'cash' : 'riskon');
-        coverBadge.innerText = isCash
-          ? `REGIME: CASH PRESERVATION (${(payload.market_average_crash_probability * 100).toFixed(1)}% P_b)`
-          : `REGIME: RISK-ON (${payload.market_expected_drift_pct >= 0 ? '+' : ''}${payload.market_expected_drift_pct}%)`;
+        coverBadge.className = 'regime-tag mono ' + regClass;
+        coverBadge.innerText = `${regLabel} (${pbAvg}% P_b)`;
       }
 
       const tape = document.getElementById('cover-tape');
@@ -2933,10 +2957,22 @@
       const tbody = document.getElementById('dir-table-body');
       if (!tbody || !SIGNALS || !SIGNALS.length) return;
 
+      const secMatchers = {
+        'Financial Services': ['financial', 'bank', 'insurance', 'nbfc'],
+        'Information Technology': ['information technology', 'software', 'telecom services'],
+        'Automobile': ['automobile', 'vehicle', '2-wheeler', 'motorcycle'],
+        'Oil, Gas': ['oil', 'gas', 'energy', 'refining', 'exploration'],
+        'Consumer': ['consumer', 'fmcg', 'food', 'beverage', 'retail', 'jewellery', 'paints'],
+        'Healthcare': ['healthcare', 'pharma', 'hospital'],
+        'Metals': ['metals', 'mining', 'steel', 'aluminium', 'copper']
+      };
+
       let filtered = SIGNALS.filter(s => {
         if (dirFilterSector !== 'ALL') {
-          const sec = s.sector || '';
-          if (!sec.toLowerCase().includes(dirFilterSector.toLowerCase())) return false;
+          const sec = (s.sector || '').toLowerCase();
+          const matchTerms = secMatchers[dirFilterSector] || [dirFilterSector.toLowerCase()];
+          const matches = matchTerms.some(term => sec.includes(term));
+          if (!matches) return false;
         }
         if (dirFilterText) {
           const sym = (s.symbol || '').toLowerCase();
@@ -2947,13 +2983,20 @@
       });
 
       filtered.sort((a, b) => {
-        let va = a[dirSortCol];
-        let vb = b[dirSortCol];
+        const pa = presentSignal(a);
+        const pb = presentSignal(b);
+        let va = pa ? pa.finalScore : 0;
+        let vb = pb ? pb.finalScore : 0;
+        if (dirSortCol === 'symbol') { va = a.symbol; vb = b.symbol; }
+        else if (dirSortCol === 'close_price') { va = a.close_price; vb = b.close_price; }
+        else if (dirSortCol === 'change_1d_pct') { va = a.change_1d_pct; vb = b.change_1d_pct; }
+        else if (dirSortCol === 'predicted_return_pct') { va = a.predicted_return_pct; vb = b.predicted_return_pct; }
+        else if (dirSortCol === 'aleatoric_vol_pct') { va = a.aleatoric_vol_pct; vb = b.aleatoric_vol_pct; }
+        else if (dirSortCol === 'drawdown_crash_prob') { va = a.drawdown_crash_prob; vb = b.drawdown_crash_prob; }
+        
         if (typeof va === 'string') {
           return dirSortAsc ? va.localeCompare(vb) : vb.localeCompare(va);
         }
-        va = va !== undefined ? va : 0;
-        vb = vb !== undefined ? vb : 0;
         return dirSortAsc ? va - vb : vb - va;
       });
 
@@ -2961,32 +3004,28 @@
       if (countEl) countEl.innerText = `${filtered.length} / ${SIGNALS.length}`;
 
       tbody.innerHTML = filtered.map(s => {
+        const p = presentSignal(s);
         const isCur = s.symbol === CURRENT_SYMBOL;
-        const chg1d = s.change_1d_pct !== undefined ? s.change_1d_pct : 0;
-        const chgCol = chg1d >= 0 ? 'var(--positive)' : 'var(--negative)';
-        const predCol = s.predicted_return_pct >= 0 ? 'var(--positive)' : 'var(--negative)';
-        const compScore = s.composite_score !== undefined ? s.composite_score.toFixed(1) : '0.0';
-        const scoreCol = s.signal_badge === 'CASH_GATE' ? 'var(--warning)' : (s.composite_score >= 70 ? 'var(--positive)' : (s.composite_score >= 45 ? '#D4A373' : 'var(--text-muted)'));
-        const verdict = s.recommended_action || (s.signal_badge === 'CASH_GATE' ? 'CASH GATE' : 'QUALIFIED');
-        const badgeClass = s.signal_badge === 'CASH_GATE' ? 'warn' : (s.composite_score >= 50 ? 'pos' : 'neg');
+        const chgCol = p.chg1d >= 0 ? 'var(--positive)' : 'var(--negative)';
+        const predCol = p.driftPct >= 0 ? 'var(--positive)' : 'var(--negative)';
 
         return `
-          <tr style="${isCur ? 'background:rgba(201, 106, 75, 0.08); font-weight:600;' : ''}">
+          <tr style="${isCur ? 'background:rgba(166, 92, 66, 0.08); font-weight:600;' : ''}">
             <td style="text-align:left;">
-              <b style="color:var(--text-primary); cursor:pointer;" onclick="inspectFromDirectory('${s.symbol}')">${s.symbol}</b>
+              <b style="color:var(--text-primary); cursor:pointer;" onclick="inspectFromDirectory('${p.sym}')">${p.sym}</b>
               ${isCur ? ' <span style="font-size:10px; color:var(--accent);">● ACTIVE</span>' : ''}
             </td>
             <td style="text-align:left; color:var(--text-secondary); font-size:11px;">${s.sector || 'Large Cap'}</td>
-            <td style="text-align:right;">₹${s.close_price.toFixed(2)}</td>
-            <td style="text-align:right; color:${chgCol};">${chg1d >= 0 ? '+' : ''}${chg1d.toFixed(2)}%</td>
-            <td style="text-align:right; color:${predCol}; font-weight:600;">${s.predicted_return_pct >= 0 ? '+' : ''}${s.predicted_return_pct.toFixed(2)}%</td>
-            <td style="text-align:right; color:var(--text-secondary);">${s.aleatoric_vol_pct.toFixed(2)}%</td>
-            <td style="text-align:right; color:${s.drawdown_crash_prob > 0.35 ? 'var(--warning)' : 'var(--text-secondary)'};">${(s.drawdown_crash_prob * 100).toFixed(1)}%</td>
-            <td style="text-align:right; color:${scoreCol}; font-weight:700;">${compScore}/100</td>
-            <td style="text-align:center;"><span class="status-pill ${badgeClass}">${verdict.split(' ')[0]}</span></td>
+            <td style="text-align:right;">₹${p.spotPx.toFixed(2)}</td>
+            <td style="text-align:right; color:${chgCol};">${p.chg1d >= 0 ? '+' : ''}${p.chg1d.toFixed(2)}%</td>
+            <td style="text-align:right; color:${predCol}; font-weight:600;">${p.driftPct >= 0 ? '+' : ''}${p.driftPct.toFixed(2)}%</td>
+            <td style="text-align:right; color:var(--text-secondary);">${p.aleaPct.toFixed(2)}%</td>
+            <td style="text-align:right; color:${p.pbPct > CRASH_CEILING_PCT ? 'var(--warning)' : 'var(--text-secondary)'};">${p.pbPct.toFixed(1)}%</td>
+            <td style="text-align:right; color:${p.scoreColor}; font-weight:700;">${p.finalScore.toFixed(1)}/100</td>
+            <td style="text-align:center;"><span class="status-pill ${p.badgeClass}">${p.verdict.split(' ')[0]}</span></td>
             <td style="text-align:center;">
-              <button class="dir-btn-inspect" onclick="inspectFromDirectory('${s.symbol}')">Inspect Chart</button>
-              <button class="dir-btn-ask" onclick="askBrainForSymbol('${s.symbol}')" style="margin-left:4px;">Analyze →</button>
+              <button class="dir-btn-inspect" onclick="inspectFromDirectory('${p.sym}')">Inspect Chart</button>
+              <button class="dir-btn-ask" onclick="askBrainForSymbol('${p.sym}')" style="margin-left:4px;">Analyze →</button>
             </td>
           </tr>
         `;
@@ -3019,6 +3058,89 @@
 
     // Dual Rationale Mode Toggle (Layman vs Mathematical vs Both)
     let CURRENT_RATIONALE_MODE = 'both';
+    
+    // ==========================================================================
+    // UNIFIED SIGNAL PRESENTATION LAYER (SINGLE SOURCE OF TRUTH)
+    // ==========================================================================
+    const CRASH_CEILING_PCT = 48.0;
+
+    function presentSignal(sig) {
+      if (!sig) return null;
+      const sym = sig.symbol || 'STOCK';
+      const rawScore = Number((sig.raw_decision_score !== undefined ? sig.raw_decision_score : (sig.composite_score || 0)).toFixed(1));
+      const mult = Number((sig.gate_multiplier !== undefined ? sig.gate_multiplier : 1.0).toFixed(2));
+      const finalScore = Number((sig.final_composite_score !== undefined ? sig.final_composite_score : (rawScore * mult)).toFixed(1));
+      const driftPct = Number((sig.predicted_return_pct !== undefined ? sig.predicted_return_pct : (sig.change_20d_pct || 0)).toFixed(2));
+      const pbPct = Number(((sig.drawdown_crash_prob !== undefined ? sig.drawdown_crash_prob : 0.35) * 100).toFixed(1));
+      const epi = Number((sig.epistemic_uncertainty !== undefined ? sig.epistemic_uncertainty : 0.005).toFixed(5));
+      const aleaPct = Number((sig.aleatoric_vol_pct !== undefined ? sig.aleatoric_vol_pct : 4.5).toFixed(2));
+      const spotPx = Number((sig.close_price || 0).toFixed(2));
+      const chg1d = Number((sig.change_1d_pct || 0).toFixed(2));
+      const verdict = sig.recommended_action || (finalScore >= 50 ? 'ACCUMULATE / QUALIFIED' : (finalScore >= 40 ? 'HOLD / DEFENSIVE TRAIL' : 'AVOID / CASH SHELTER'));
+
+      // Strict institutional color calibration
+      let scoreColor = '#B44D40'; // negative
+      let badgeClass = 'neg';
+      if (finalScore >= 50) {
+        scoreColor = '#34735F'; // positive
+        badgeClass = 'pos';
+      } else if (finalScore >= 40) {
+        scoreColor = '#B58945'; // warning / caution
+        badgeClass = 'warn';
+      }
+
+      // Layman bullets
+      let l1 = '';
+      if (driftPct <= 0) {
+        l1 = `<strong>Direction:</strong> 🛑 <em>Falling trend.</em> ${sym} is drifting downward (${driftPct >= 0 ? '+' : ''}${driftPct}%). The system automatically vetoes buy orders to protect your cash.`;
+      } else if (driftPct > 3.0) {
+        l1 = `<strong>Direction:</strong> 🚀 <em>Positive climb.</em> ${sym} shows expected 20-day gain of +${driftPct}% supported by steady buyer accumulation.`;
+      } else {
+        l1 = `<strong>Direction:</strong> 📈 <em>Mild upward drift.</em> ${sym} is edging up slowly (+${driftPct}%), consolidating above its moving averages.`;
+      }
+
+      let l2 = '';
+      if (pbPct > CRASH_CEILING_PCT) {
+        l2 = `<strong>Safety Check:</strong> ⚠️ <em>High danger (${pbPct}% crash chance).</em> Exceeds our ${CRASH_CEILING_PCT}% safety ceiling; capital preservation gates are active.`;
+      } else if (epi > 0.007) {
+        l2 = `<strong>AI Confidence:</strong> 🔍 <em>Turbulent pattern.</em> The neural ensemble shows elevated self-doubt; trade size is kept defensive.`;
+      } else {
+        l2 = `<strong>AI Confidence:</strong> ✅ <em>Reliable pattern.</em> Model self-doubt is low, and crash risk (${pbPct}%) is comfortably below our ${CRASH_CEILING_PCT}% limit.`;
+      }
+
+      let l3 = '';
+      if (finalScore >= 50) {
+        l3 = `<strong>What to do:</strong> 🟢 <strong>BUY / ACCUMULATE.</strong> Final score is ${finalScore}/100. Taxes and transaction costs won't eat your edge.`;
+      } else if (finalScore >= 40) {
+        l3 = `<strong>What to do:</strong> 🟡 <strong>HOLD EXISTING SHARES.</strong> Final score is ${finalScore}/100 (reduced by safety multiplier ×${mult.toFixed(2)}). Hold what you have, wait before adding new cash.`;
+      } else {
+        l3 = `<strong>What to do:</strong> 🔴 <strong>AVOID / STAY IN CASH.</strong> Weak setup (Final score ${finalScore}/100). Money is safer in the bank than in this trade.`;
+      }
+
+      // Math bullets
+      const m1 = `Return & Noise: 20D Drift ${driftPct >= 0 ? '+' : ''}${driftPct}% vs Vol ${aleaPct}% → Alpha Score ${(sig.score_alpha||0).toFixed(1)}/40 pts.`;
+      const m2 = `Model & Tail: Trust ${(sig.score_confidence||0).toFixed(1)}/25 pts | Tail Safety ${(sig.score_tail||0).toFixed(1)}/25 pts (Breach Likelihood: ${pbPct}% vs ${CRASH_CEILING_PCT}% cap).`;
+      const m3 = `Gate & Execution: Friction Buffer ${(sig.score_friction||0).toFixed(1)}/10 pts | Gate Multiplier ×${mult.toFixed(2)} → Final Score ${finalScore}/100.`;
+
+      return {
+        sym,
+        rawScore,
+        mult,
+        finalScore,
+        driftPct,
+        pbPct,
+        epi,
+        aleaPct,
+        spotPx,
+        chg1d,
+        verdict,
+        scoreColor,
+        badgeClass,
+        laymanBullets: [l1, l2, l3],
+        mathBullets: [m1, m2, m3]
+      };
+    }
+
     function setRationaleMode(mode) {
       CURRENT_RATIONALE_MODE = mode;
       ['both', 'layman', 'math'].forEach(m => {
@@ -3047,46 +3169,8 @@
 
     // Generate plain layman explanation from quantitative signal fields
     function generateLaymanRationale(sig) {
-      const sym = sig.symbol || 'STOCK';
-      const drift = sig.drift_20d !== undefined ? sig.drift_20d : 0;
-      const score = sig.composite_score !== undefined ? sig.composite_score : 0;
-      const rawScore = sig.raw_decision_score !== undefined ? sig.raw_decision_score : score;
-      const pb = sig.drawdown_crash_prob !== undefined ? sig.drawdown_crash_prob : (sig.p_breach || 0.35);
-      const epi = sig.epistemic_uncertainty !== undefined ? sig.epistemic_uncertainty : 0.05;
-      const action = sig.recommended_action || (score >= 60 ? 'BUY' : (score >= 40 ? 'HOLD' : 'AVOID'));
-      const mult = sig.gate_multiplier !== undefined ? sig.gate_multiplier : 1.0;
-
-      // 1. Direction / Trend
-      let b1 = '';
-      if (drift <= 0) {
-        b1 = `<strong>Direction:</strong> 🛑 <em>Falling trend.</em> ${sym} is drifting downward (${(drift*100).toFixed(1)}%). Our system automatically blocks new purchases to protect your capital.`;
-      } else if (drift > 0.04) {
-        b1 = `<strong>Direction:</strong> 🚀 <em>Strong upward push.</em> ${sym} has gained +${(drift*100).toFixed(1)}% recently with high buyer demand.`;
-      } else {
-        b1 = `<strong>Direction:</strong> 📈 <em>Gentle upward trend.</em> ${sym} is climbing slowly (+${(drift*100).toFixed(1)}%), holding above its moving average.`;
-      }
-
-      // 2. AI Confidence & Safety Check
-      let b2 = '';
-      if (pb > 0.40) {
-        b2 = `<strong>Safety Check:</strong> ⚠️ <em>High crash risk (${(pb*100).toFixed(0)}%).</em> The model sees high chance of a sharp drop, so risk gates are activated.`;
-      } else if (epi > 0.06) {
-        b2 = `<strong>AI Confidence:</strong> 🔍 <em>AI is unsure.</em> Market is turbulent and our neural ensemble shows high disagreement; proceed with caution.`;
-      } else {
-        b2 = `<strong>AI Confidence:</strong> ✅ <em>Solid & reliable.</em> Low model confusion and crash danger is small (${(pb*100).toFixed(0)}% likelihood).`;
-      }
-
-      // 3. Simple Bottom Line Verdict
-      let b3 = '';
-      if (score >= 60) {
-        b3 = `<strong>What to do:</strong> 🟢 <strong>BUY / ACCUMULATE.</strong> Overall score is strong (${score.toFixed(1)}/100). Government taxes (STT) and fees won't eat your edge.`;
-      } else if (score >= 45) {
-        b3 = `<strong>What to do:</strong> 🟡 <strong>HOLD WITH STOP-LOSS.</strong> Score is decent (${score.toFixed(1)}/100). Keep existing positions but wait for a clear breakout before adding fresh money.`;
-      } else {
-        b3 = `<strong>What to do:</strong> 🔴 <strong>AVOID / STAY IN CASH.</strong> Weak setup (${score.toFixed(1)}/100). Better to keep your money safe in the bank than risk a losing trade.`;
-      }
-
-      return [b1, b2, b3];
+      const p = presentSignal(sig);
+      return p ? p.laymanBullets : [];
     }
 
     async function loadChartForSymbol(sym) {
@@ -3105,7 +3189,7 @@
           if (SNAPSHOT && SNAPSHOT.charts) SNAPSHOT.charts[sym] = d;
           renderArtifactChart(sym, d);
         }
-      } catch (e) {}
+      } catch (e) { console.warn('AlphaNiti diagnostic:', e); }
     }
 
     function renderArtifactChart(sym, chartPayload) {
@@ -3886,203 +3970,115 @@
       if (!s) return;
       const { ctx, width: W, height: H } = s;
       const sig = getSignalForSymbol(sym);
+      const p = presentSignal(sig);
+      if (!p) return;
 
-      // ── background ──────────────────────────────────────────────────────────
-      ctx.fillStyle = '#080C14';
+      const isDk = document.documentElement.getAttribute('data-theme') === 'dark';
+      ctx.fillStyle = isDk ? '#141716' : '#FAF8F3';
       ctx.fillRect(0, 0, W, H);
 
-      // subtle grid
-      ctx.strokeStyle = 'rgba(255,255,255,0.025)';
+      ctx.strokeStyle = isDk ? 'rgba(255,255,255,0.025)' : 'rgba(34, 43, 42, 0.05)';
       ctx.lineWidth = 1;
       for (let x = 0; x < W; x += 40) { ctx.beginPath(); ctx.moveTo(x,0); ctx.lineTo(x,H); ctx.stroke(); }
       for (let y = 0; y < H; y += 40) { ctx.beginPath(); ctx.moveTo(0,y); ctx.lineTo(W,y); ctx.stroke(); }
 
-      // ── data ────────────────────────────────────────────────────────────────
-      const sAlpha = sig.score_alpha       !== undefined ? sig.score_alpha       : 25.0;
-      const sConf  = sig.score_confidence  !== undefined ? sig.score_confidence  : 14.0;
-      const sTail  = sig.score_tail        !== undefined ? sig.score_tail        : 15.0;
-      const sFrict = sig.score_friction    !== undefined ? sig.score_friction    : 10.0;
-      const rawScore   = sig.raw_decision_score !== undefined ? sig.raw_decision_score : (sAlpha+sConf+sTail+sFrict);
-      const mult       = sig.gate_multiplier    !== undefined ? sig.gate_multiplier    : 0.75;
-      const finalScore = sig.composite_score    !== undefined ? sig.composite_score    : (rawScore*mult);
-      const verdict    = sig.recommended_action || 'HOLD / DEFENSIVE TRAIL';
-      const tier       = sig.gate_tier          !== undefined ? sig.gate_tier          : 1;
+      const sAlpha = sig.score_alpha !== undefined ? sig.score_alpha : 25.0;
+      const sConf  = sig.score_confidence !== undefined ? sig.score_confidence : 14.0;
+      const sTail  = sig.score_tail !== undefined ? sig.score_tail : 15.0;
+      const sFrict = sig.score_friction !== undefined ? sig.score_friction : 10.0;
+      const rawScore = p.rawScore;
+      const mult = p.mult;
+      const finalScore = p.finalScore;
+      const verdict = p.verdict;
+      const tier = sig.gate_tier !== undefined ? sig.gate_tier : 1;
 
       const pillars = [
-        { key:'α', label:'Alpha Edge',   sub:'Risk-adjusted 20D expected return',  val:sAlpha, max:40, wt:'40 pts', color:'#00E599', glow:'rgba(0,229,153,0.35)'   },
-        { key:'c', label:'Reliability',  sub:'Evidential NIG uncertainty audit',   val:sConf,  max:25, wt:'25 pts', color:'#7B61FF', glow:'rgba(123,97,255,0.35)'  },
-        { key:'t', label:'Crash Safety', sub:'Barrier breach probability floor',   val:sTail,  max:25, wt:'25 pts', color:'#F4A261', glow:'rgba(244,162,97,0.35)'  },
-        { key:'f', label:'STT Buffer',   sub:'Statutory friction vs edge delta',   val:sFrict, max:10, wt:'10 pts', color:'#2EC4B6', glow:'rgba(46,196,182,0.35)'  },
+        { key:'α', label:'Alpha Edge', sub:'Risk-adjusted 20D expected return', val:sAlpha, max:40, wt:'40 pts', color:'#34735F' },
+        { key:'c', label:'Reliability', sub:'Evidential NIG uncertainty audit', val:sConf, max:25, wt:'25 pts', color:'#315D62' },
+        { key:'t', label:'Crash Safety', sub:'Barrier breach probability floor', val:sTail, max:25, wt:'25 pts', color:'#A65C42' },
+        { key:'f', label:'STT Buffer', sub:'Statutory friction vs edge delta', val:sFrict, max:10, wt:'10 pts', color:'#727D59' }
       ];
 
-      // ── layout ──────────────────────────────────────────────────────────────
-      const RING_R  = Math.min(W * 0.17, 82);
+      const RING_R = Math.min(W * 0.17, 82);
       const RING_CX = RING_R + 24;
       const RING_CY = H * 0.36;
       const barZoneX = RING_CX * 2 + 24;
       const barZoneW = W - barZoneX - 14;
-      const barH    = 16;
-      const barGap  = 22;
-      const barTop  = 12;
+      const barH = 16;
+      const barGap = 22;
+      const barTop = 12;
 
-      // ── DIAL ────────────────────────────────────────────────────────────────
-      const scoreCol  = finalScore >= 70 ? '#00E599' : finalScore >= 45 ? '#D4A373' : '#FF453A';
-      const scoreGlow = finalScore >= 70 ? 'rgba(0,229,153,0.38)' : finalScore >= 45 ? 'rgba(212,163,115,0.38)' : 'rgba(255,69,58,0.38)';
-
-      // outer ambient glow
-      const glowGrad = ctx.createRadialGradient(RING_CX,RING_CY,RING_R*0.55,RING_CX,RING_CY,RING_R+18);
-      glowGrad.addColorStop(0, scoreGlow); glowGrad.addColorStop(1,'transparent');
-      ctx.fillStyle = glowGrad;
-      ctx.beginPath(); ctx.arc(RING_CX,RING_CY,RING_R+18,0,Math.PI*2); ctx.fill();
-
-      // track
+      const scoreCol = p.scoreColor;
       ctx.beginPath();
-      ctx.arc(RING_CX,RING_CY,RING_R,Math.PI*0.75,Math.PI*2.25);
-      ctx.strokeStyle = 'rgba(255,255,255,0.07)'; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.stroke();
+      ctx.arc(RING_CX, RING_CY, RING_R, Math.PI * 0.75, Math.PI * 2.25);
+      ctx.strokeStyle = isDk ? 'rgba(255,255,255,0.07)' : 'rgba(34, 43, 42, 0.08)';
+      ctx.lineWidth = 9;
+      ctx.lineCap = 'round';
+      ctx.stroke();
 
-      // value arc
-      const arcFrac = Math.max(0,Math.min(1,finalScore/100));
-      const arcStart = Math.PI*0.75;
+      const arcFrac = Math.max(0, Math.min(1, finalScore / 100));
+      const arcStart = Math.PI * 0.75;
       if (arcFrac > 0) {
-        const arcGrad = ctx.createLinearGradient(RING_CX-RING_R,RING_CY,RING_CX+RING_R,RING_CY);
-        arcGrad.addColorStop(0, scoreCol); arcGrad.addColorStop(1,'#FFFFFF');
         ctx.beginPath();
-        ctx.arc(RING_CX,RING_CY,RING_R,arcStart,arcStart+arcFrac*Math.PI*1.5);
-        ctx.strokeStyle = arcGrad; ctx.lineWidth = 9; ctx.lineCap = 'round'; ctx.stroke();
+        ctx.arc(RING_CX, RING_CY, RING_R, arcStart, arcStart + arcFrac * Math.PI * 1.5);
+        ctx.strokeStyle = scoreCol;
+        ctx.lineWidth = 9;
+        ctx.lineCap = 'round';
+        ctx.stroke();
       }
 
-      // tick marks
-      for (let v=0; v<=100; v+=10) {
-        const ang = arcStart+(v/100)*Math.PI*1.5;
-        const r0=RING_R-13, r1=RING_R-5;
-        ctx.beginPath();
-        ctx.moveTo(RING_CX+Math.cos(ang)*r0,RING_CY+Math.sin(ang)*r0);
-        ctx.lineTo(RING_CX+Math.cos(ang)*r1,RING_CY+Math.sin(ang)*r1);
-        ctx.strokeStyle = v%50===0?'rgba(255,255,255,0.3)':'rgba(255,255,255,0.09)';
-        ctx.lineWidth   = v%50===0?1.4:0.7; ctx.stroke();
-      }
-
-      // center number
       ctx.textAlign = 'center';
-      ctx.font = `bold ${Math.round(RING_R*0.46)}px "JetBrains Mono",monospace`;
-      ctx.fillStyle = scoreCol; ctx.shadowColor = scoreCol; ctx.shadowBlur = 14;
-      ctx.fillText(finalScore.toFixed(1), RING_CX, RING_CY+8);
-      ctx.shadowBlur = 0;
-      ctx.font = `${Math.round(RING_R*0.22)}px "JetBrains Mono",monospace`;
-      ctx.fillStyle = '#7A8599';
-      ctx.fillText('/100', RING_CX, RING_CY+RING_R*0.38+8);
+      ctx.font = `bold ${Math.round(RING_R * 0.46)}px "IBM Plex Mono", monospace`;
+      ctx.fillStyle = scoreCol;
+      ctx.fillText(finalScore.toFixed(1), RING_CX, RING_CY + 8);
 
-      // verdict badge
-      const vBY = RING_CY+RING_R+20;
-      ctx.fillStyle='rgba(255,255,255,0.04)'; ctx.strokeStyle=scoreCol+'44'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.roundRect(2,vBY,RING_CX*2-4,19,4); ctx.fill(); ctx.stroke();
-      ctx.font='bold 7.5px "JetBrains Mono",monospace'; ctx.fillStyle=scoreCol; ctx.textAlign='center';
-      const vs = verdict.length>22?verdict.slice(0,21)+'…':verdict;
-      ctx.fillText(vs, RING_CX, vBY+13);
+      ctx.font = `${Math.round(RING_R * 0.22)}px "IBM Plex Mono", monospace`;
+      ctx.fillStyle = isDk ? '#7A8599' : '#68716E';
+      ctx.fillText('/100', RING_CX, RING_CY + RING_R * 0.38 + 8);
 
-      // tier chip
-      const tierLabels = ['FROZEN','TIER 1','TIER 2','TIER 3'];
-      const tierColors = ['#FF453A','#2EC4B6','#D4A373','#FF453A'];
-      const tl = tierLabels[Math.min(tier,3)]||'TIER 1';
-      const tc = tierColors[Math.min(tier,3)]||'#2EC4B6';
-      ctx.font='bold 7px "JetBrains Mono",monospace'; ctx.fillStyle=tc;
-      ctx.fillText(`⬤ ${tl} · ×${mult.toFixed(2)}`, RING_CX, vBY+32);
+      const vBY = RING_CY + RING_R + 20;
+      ctx.font = 'bold 8px "IBM Plex Mono", monospace';
+      ctx.fillStyle = scoreCol;
+      ctx.fillText(verdict.slice(0, 22), RING_CX, vBY + 12);
 
-      // ── PILLAR BARS ──────────────────────────────────────────────────────────
-      pillars.forEach((p,idx) => {
-        const y = barTop + idx*(barH+barGap);
-        const fillFrac = Math.max(0,Math.min(1,p.val/p.max));
-        const fillW = fillFrac*barZoneW;
+      pillars.forEach((pillar, idx) => {
+        const y = barTop + idx * (barH + barGap);
+        const fillFrac = Math.max(0, Math.min(1, pillar.val / pillar.max));
+        const fillW = fillFrac * barZoneW;
 
-        // pillar key badge
-        ctx.textAlign='left'; ctx.font='bold 9px "JetBrains Mono",monospace'; ctx.fillStyle=p.color;
-        ctx.fillText(`S_${p.key}`, barZoneX, y+7);
+        ctx.textAlign = 'left';
+        ctx.font = 'bold 9px "IBM Plex Mono", monospace';
+        ctx.fillStyle = pillar.color;
+        ctx.fillText(`S_${pillar.key}`, barZoneX, y + 7);
 
-        // label
-        ctx.font='bold 11px "Inter",sans-serif'; ctx.fillStyle='#E6E8ED';
-        ctx.fillText(p.label, barZoneX+28, y+8);
+        ctx.font = 'bold 11px "Plus Jakarta Sans", sans-serif';
+        ctx.fillStyle = isDk ? '#EBEAE5' : '#222B2A';
+        ctx.fillText(pillar.label, barZoneX + 28, y + 8);
 
-        // weight badge (top-right)
-        ctx.font='9px "JetBrains Mono",monospace';
-        const wbW = ctx.measureText(p.wt).width+10;
-        const wbX = W-14-wbW;
-        ctx.fillStyle=p.color+'1A'; ctx.strokeStyle=p.color+'55'; ctx.lineWidth=0.8;
-        ctx.beginPath(); ctx.roundRect(wbX,y,wbW,12,3); ctx.fill(); ctx.stroke();
-        ctx.fillStyle=p.color; ctx.textAlign='center';
-        ctx.fillText(p.wt, wbX+wbW/2, y+9);
+        const bY = y + 20;
+        ctx.fillStyle = isDk ? '#1A1E1D' : 'rgba(34, 43, 42, 0.06)';
+        ctx.beginPath();
+        ctx.roundRect(barZoneX, bY, barZoneW, barH, 4);
+        ctx.fill();
 
-        // sub-description
-        ctx.textAlign='left'; ctx.font='9px "Inter",sans-serif'; ctx.fillStyle='#424D62';
-        ctx.fillText(p.sub, barZoneX, y+18);
-
-        // bar track
-        const bY = y+20;
-        ctx.fillStyle='#0F1520'; ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=0.5;
-        ctx.beginPath(); ctx.roundRect(barZoneX,bY,barZoneW,barH,4); ctx.fill(); ctx.stroke();
-
-        // gradient fill + glow
-        if (fillW>1) {
-          const bg = ctx.createLinearGradient(barZoneX,0,barZoneX+fillW,0);
-          bg.addColorStop(0,p.color+'AA'); bg.addColorStop(1,p.color);
-          ctx.fillStyle=bg; ctx.shadowColor=p.glow; ctx.shadowBlur=9;
-          ctx.beginPath(); ctx.roundRect(barZoneX,bY,fillW,barH,4); ctx.fill();
-          ctx.shadowBlur=0;
-          // shimmer
-          ctx.strokeStyle='rgba(255,255,255,0.15)'; ctx.lineWidth=1;
-          ctx.beginPath(); ctx.moveTo(barZoneX+2,bY+1.5); ctx.lineTo(barZoneX+fillW-2,bY+1.5); ctx.stroke();
+        if (fillW > 1) {
+          ctx.fillStyle = pillar.color;
+          ctx.beginPath();
+          ctx.roundRect(barZoneX, bY, fillW, barH, 4);
+          ctx.fill();
         }
 
-        // value inside/beside bar
-        const valStr=`${p.val.toFixed(1)} / ${p.max}`;
-        ctx.font='bold 8.5px "JetBrains Mono",monospace';
-        if (fillFrac>0.55) {
-          ctx.fillStyle='rgba(255,255,255,0.88)'; ctx.textAlign='right';
-          ctx.fillText(valStr, barZoneX+fillW-5, bY+barH/2+3);
-        } else {
-          ctx.fillStyle=p.color; ctx.textAlign='left';
-          ctx.fillText(valStr, barZoneX+fillW+5, bY+barH/2+3);
-        }
-
-        // % label above right edge
-        ctx.textAlign='right'; ctx.font='8px "JetBrains Mono",monospace'; ctx.fillStyle='#2D3548';
-        ctx.fillText(`${Math.round(fillFrac*100)}%`, barZoneX+barZoneW-1, bY-2);
+        ctx.font = 'bold 8.5px "IBM Plex Mono", monospace';
+        ctx.fillStyle = fillFrac > 0.55 ? '#FFFFFF' : pillar.color;
+        ctx.textAlign = fillFrac > 0.55 ? 'right' : 'left';
+        ctx.fillText(`${pillar.val.toFixed(1)} / ${pillar.max}`, fillFrac > 0.55 ? barZoneX + fillW - 5 : barZoneX + fillW + 5, bY + barH / 2 + 3);
       });
 
-      // ── FORMULA FOOTER ───────────────────────────────────────────────────────
-      const fY = H - 40;
-      ctx.strokeStyle='rgba(255,255,255,0.05)'; ctx.lineWidth=1;
-      ctx.beginPath(); ctx.moveTo(10,fY-6); ctx.lineTo(W-10,fY-6); ctx.stroke();
-
-      // colour-coded inline formula
-      const parts = [
-        {t:'S_raw',c:'#9AA6B8'},{t:' = ',c:'#3D4A5C'},
-        {t:'S_α',c:'#00E599'},{t:'(40)',c:'#2D3548'},
-        {t:' + ',c:'#3D4A5C'},
-        {t:'S_conf',c:'#7B61FF'},{t:'(25)',c:'#2D3548'},
-        {t:' + ',c:'#3D4A5C'},
-        {t:'S_tail',c:'#F4A261'},{t:'(25)',c:'#2D3548'},
-        {t:' + ',c:'#3D4A5C'},
-        {t:'S_frict',c:'#2EC4B6'},{t:'(10)',c:'#2D3548'},
-        {t:'   ·  Raw ',c:'#3D4A5C'},{t:rawScore.toFixed(1),c:'#E6E8ED'},
-        {t:`  ×${mult.toFixed(2)}`,c:'#9AA6B8'},
-        {t:'  =  ',c:'#3D4A5C'},
-        {t:`${finalScore.toFixed(1)} / 100`,c:scoreCol},
-      ];
-      ctx.font='10px "JetBrains Mono",monospace'; ctx.textAlign='left';
-      let fx=14;
-      parts.forEach(pt=>{ ctx.fillStyle=pt.c; ctx.fillText(pt.t,fx,fY+8); fx+=ctx.measureText(pt.t).width; });
-
-      // ── WATERFALL STRIP ───────────────────────────────────────────────────────
-      const wfY=fY+16, wfH=5, wfW=W-28;
-      ctx.fillStyle='#0F1520'; ctx.beginPath(); ctx.roundRect(14,wfY,wfW,wfH,2); ctx.fill();
-      let wfX=14;
-      [[sAlpha,'#00E599'],[sConf,'#7B61FF'],[sTail,'#F4A261'],[sFrict,'#2EC4B6']].forEach(([v,c])=>{
-        const sw=(Math.max(0,v)/100)*wfW;
-        if(sw>0){
-          ctx.fillStyle=c; ctx.shadowColor=c+'99'; ctx.shadowBlur=4;
-          ctx.fillRect(wfX,wfY,sw,wfH); ctx.shadowBlur=0; wfX+=sw;
-        }
-      });
+      const fY = H - 36;
+      ctx.font = '10px "IBM Plex Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillStyle = isDk ? '#A3A7A4' : '#68716E';
+      ctx.fillText(`S_raw: ${rawScore.toFixed(1)} × Gate Multiplier ${mult.toFixed(2)}x = Final S: ${finalScore.toFixed(1)}/100`, 16, fY + 12);
     }
 
     // Hash router for direct links (e.g. #math-charts)
