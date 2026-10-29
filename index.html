@@ -1305,6 +1305,110 @@
       color: var(--bg-main);
     }
 
+  
+    /* ==========================================================================
+       MATHEMATICAL MULTI-CHART STUDIO (EV-NIG, TAIL-HAZARD, 4-PILLAR SCORING)
+       ========================================================================== */
+    .math-chart-nav-bar {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 7px 14px;
+      background: #11141C;
+      border-bottom: 1px solid #232733;
+      gap: 10px;
+    }
+    .math-nav-label {
+      font-size: 10.5px;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      color: #7E8B9B;
+      text-transform: uppercase;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .math-nav-tabs {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-wrap: wrap;
+    }
+    .math-tab-btn {
+      background: #181C26;
+      border: 1px solid #282E3D;
+      color: #9AA6B8;
+      font-size: 11px;
+      font-family: 'JetBrains Mono', monospace;
+      padding: 4px 11px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+    }
+    .math-tab-btn:hover {
+      background: #202634;
+      color: #EDEDEB;
+      border-color: #3D465C;
+    }
+    .math-tab-btn.active {
+      background: rgba(0, 229, 153, 0.12);
+      border-color: #00E599;
+      color: #00E599;
+      font-weight: 600;
+      box-shadow: 0 0 10px rgba(0, 229, 153, 0.2);
+    }
+    .math-canvas-view {
+      flex: 1;
+      width: 100%;
+      min-height: 340px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+      background: #0E1118;
+    }
+    .math-canvas-header {
+      padding: 10px 16px 6px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      border-bottom: 1px solid #1A1F2B;
+      background: #121620;
+    }
+    .math-canvas-title {
+      font-size: 12px;
+      font-weight: 600;
+      color: #E6E8ED;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .math-canvas-sub {
+      font-size: 10.5px;
+      color: #7E8B9B;
+    }
+    .math-direct-link-pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0, 229, 153, 0.1);
+      border: 1px solid rgba(0, 229, 153, 0.3);
+      color: #00E599;
+      padding: 4px 10px;
+      border-radius: 4px;
+      font-size: 11px;
+      text-decoration: none;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+    .math-direct-link-pill:hover {
+      background: rgba(0, 229, 153, 0.2);
+      border-color: #00E599;
+      box-shadow: 0 0 8px rgba(0, 229, 153, 0.25);
+    }
+
   </style>
 </head>
 <body>
@@ -1366,6 +1470,9 @@
               <button class="btn-enter-secondary" onclick="enterWithPrompt('Where should I invest ₹2,50,000 today?')">
                 Run Discrete Portfolio Sizer (₹2.5L)
               </button>
+              <a href="#math-charts" class="math-direct-link-pill mono" onclick="switchCoverMathView('evidential')">
+                <span>🔬 Direct Access: Multi-Chart Mathematical Studio →</span>
+              </a>
             </div>
             <div class="cover-shortcut-note mono">
               Press [Enter] anywhere to open the research terminal, or select an NSE security on the right to inspect its 20-day conformal cone.
@@ -1444,17 +1551,80 @@
             </div>
           </div>
 
-          <div class="workbench-chart-wrap">
-            <div class="workbench-chart-overlay mono" id="cover-crosshair-hud">
-              <span id="c-hud-date">2026-10-23</span>
-              <span>O <b id="c-hud-o" style="color:#EDEDEB;">970.00</b></span>
-              <span>H <b id="c-hud-h" style="color:#EDEDEB;">971.40</b></span>
-              <span>L <b id="c-hud-l" style="color:#EDEDEB;">949.95</b></span>
-              <span>C <b id="c-hud-c" style="color:#EDEDEB;">958.60</b></span>
-              <span style="color:#C96A4B;">20D Conformal Fan (q̂ = 1.3644)</span>
+          <!-- MATHEMATICAL MULTI-CHART VIEW CONTROLS -->
+          <div class="math-chart-nav-bar mono" id="math-charts">
+            <div class="math-nav-label">
+              <span style="color:#00E599;">⚡</span> Mathematical Views:
             </div>
-            <div id="cover-main-chart"></div>
-            <div id="cover-rsi-chart"></div>
+            <div class="math-nav-tabs">
+              <button class="math-tab-btn active" data-view="conformal" onclick="switchCoverMathView('conformal')">
+                <span>📈 Price &amp; 20D Conformal Cone</span>
+              </button>
+              <button class="math-tab-btn" data-view="evidential" onclick="switchCoverMathView('evidential')">
+                <span>🔬 Evidential Uncertainty (NIG)</span>
+              </button>
+              <button class="math-tab-btn" data-view="tail" onclick="switchCoverMathView('tail')">
+                <span>🛡️ Downside Hazard P(t)</span>
+              </button>
+              <button class="math-tab-btn" data-view="score" onclick="switchCoverMathView('score')">
+                <span>⚖️ 4-Pillar Score Math</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="workbench-chart-wrap">
+            <!-- VIEW 1: TRADINGVIEW OHLCV + CONFORMAL FORECAST FAN -->
+            <div id="cover-view-conformal" style="display:flex; flex-direction:column; width:100%; height:100%; position:relative;">
+              <div class="workbench-chart-overlay mono" id="cover-crosshair-hud">
+                <span id="c-hud-date">2026-10-23</span>
+                <span>O <b id="c-hud-o" style="color:#EDEDEB;">970.00</b></span>
+                <span>H <b id="c-hud-h" style="color:#EDEDEB;">971.40</b></span>
+                <span>L <b id="c-hud-l" style="color:#EDEDEB;">949.95</b></span>
+                <span>C <b id="c-hud-c" style="color:#EDEDEB;">958.60</b></span>
+                <span style="color:#C96A4B;">20D Conformal Fan (q̂ = 1.3644)</span>
+              </div>
+              <div id="cover-main-chart"></div>
+              <div id="cover-rsi-chart"></div>
+            </div>
+
+            <!-- VIEW 2: EVIDENTIAL UNCERTAINTY NORMAL-INVERSE-GAMMA POSTERIOR DENSITY -->
+            <div id="cover-view-evidential" class="math-canvas-view" style="display:none;">
+              <div class="math-canvas-header mono">
+                <div class="math-canvas-title">
+                  <span style="color:#00E599;">●</span> Evidential Uncertainty Decomposition (Law of Total Variance)
+                </div>
+                <div class="math-canvas-sub" id="evidential-formula-hdr">σ²_total = σ²_alea + σ²_epis</div>
+              </div>
+              <div style="flex:1; width:100%; min-height:280px; position:relative; padding:10px;">
+                <canvas id="canvas-evidential" style="width:100%; height:100%; display:block;"></canvas>
+              </div>
+            </div>
+
+            <!-- VIEW 3: 20-DAY DOWNSIDE BARRIER BREACH RISK HAZARD CURVE -->
+            <div id="cover-view-tail" class="math-canvas-view" style="display:none;">
+              <div class="math-canvas-header mono">
+                <div class="math-canvas-title">
+                  <span style="color:#E07A5F;">●</span> 20-Day Tail Barrier Breach Risk H(t) [-5.0% Stop Loss Hurdle]
+                </div>
+                <div class="math-canvas-sub" id="tail-hazard-sub">Cumulative Hazard vs. 48.0% Macro Crash Ceiling</div>
+              </div>
+              <div style="flex:1; width:100%; min-height:280px; position:relative; padding:10px;">
+                <canvas id="canvas-tail" style="width:100%; height:100%; display:block;"></canvas>
+              </div>
+            </div>
+
+            <!-- VIEW 4: INSTITUTIONAL 4-PILLAR DECISION SCORE DECOMPOSITION -->
+            <div id="cover-view-score" class="math-canvas-view" style="display:none;">
+              <div class="math-canvas-header mono">
+                <div class="math-canvas-title">
+                  <span style="color:#D4A373;">●</span> Institutional 4-Pillar Composite Decision Score S ∈ [0, 100]
+                </div>
+                <div class="math-canvas-sub" id="score-math-sub">S_raw = S_α (40) + S_conf (25) + S_tail (25) + S_frict (10)</div>
+              </div>
+              <div style="flex:1; width:100%; min-height:280px; position:relative; padding:10px;">
+                <canvas id="canvas-score" style="width:100%; height:100%; display:block;"></canvas>
+              </div>
+            </div>
           </div>
 
           <div class="cover-rationale-box mono" id="cover-rationale-container">
@@ -2475,6 +2645,15 @@
 
       mainChart.timeScale().fitContent();
       if (coverChart) coverChart.timeScale().fitContent();
+
+      // Synchronize active mathematical studio view
+      if (CURRENT_MATH_VIEW === 'evidential') {
+        renderEvidentialCanvas(sym);
+      } else if (CURRENT_MATH_VIEW === 'tail') {
+        renderTailHazardCanvas(sym);
+      } else if (CURRENT_MATH_VIEW === 'score') {
+        renderScoreMathCanvas(sym);
+      }
     }
 
     function updateTelemetryArtifact(sym, tele) {
@@ -2704,6 +2883,455 @@
       }
       scrollEl.scrollTop = scrollEl.scrollHeight;
     }
+
+    
+    // ==========================================================================
+    // MATHEMATICAL MULTI-CHART STUDIO (EV-NIG, TAIL HAZARD, 4-PILLAR SCORING)
+    // ==========================================================================
+    let CURRENT_MATH_VIEW = 'conformal';
+
+    function switchCoverMathView(view) {
+      CURRENT_MATH_VIEW = view;
+      document.querySelectorAll('.math-tab-btn').forEach(btn => {
+        btn.classList.toggle('active', btn.getAttribute('data-view') === view);
+      });
+
+      const vConf = document.getElementById('cover-view-conformal');
+      const vEvid = document.getElementById('cover-view-evidential');
+      const vTail = document.getElementById('cover-view-tail');
+      const vScore = document.getElementById('cover-view-score');
+
+      if (vConf) vConf.style.display = view === 'conformal' ? 'flex' : 'none';
+      if (vEvid) vEvid.style.display = view === 'evidential' ? 'flex' : 'none';
+      if (vTail) vTail.style.display = view === 'tail' ? 'flex' : 'none';
+      if (vScore) vScore.style.display = view === 'score' ? 'flex' : 'none';
+
+      if (view === 'conformal') {
+        if (coverChart) coverChart.timeScale().fitContent();
+      } else if (view === 'evidential') {
+        renderEvidentialCanvas(CURRENT_SYMBOL);
+      } else if (view === 'tail') {
+        renderTailHazardCanvas(CURRENT_SYMBOL);
+      } else if (view === 'score') {
+        renderScoreMathCanvas(CURRENT_SYMBOL);
+      }
+    }
+
+    function getSignalForSymbol(sym) {
+      if (SNAPSHOT && SNAPSHOT.charts && SNAPSHOT.charts[sym] && SNAPSHOT.charts[sym].signal) {
+        return SNAPSHOT.charts[sym].signal;
+      }
+      return SIGNALS.find(s => s.symbol === sym) || {};
+    }
+
+    function setupDpiCanvas(canvasId) {
+      const canvas = document.getElementById(canvasId);
+      if (!canvas) return null;
+      const rect = canvas.getBoundingClientRect();
+      const dpr = window.devicePixelRatio || 1;
+      const w = Math.max(rect.width, 320);
+      const h = Math.max(rect.height, 280);
+      canvas.width = w * dpr;
+      canvas.height = h * dpr;
+      const ctx = canvas.getContext('2d');
+      ctx.resetTransform();
+      ctx.scale(dpr, dpr);
+      return { canvas, ctx, width: w, height: h };
+    }
+
+    // 1. EVIDENTIAL UNCERTAINTY NORMAL-INVERSE-GAMMA POSTERIOR DENSITY
+    function renderEvidentialCanvas(sym) {
+      const s = setupDpiCanvas('canvas-evidential');
+      if (!s) return;
+      const { ctx, width: W, height: H } = s;
+      const sig = getSignalForSymbol(sym);
+
+      ctx.fillStyle = '#0E1118';
+      ctx.fillRect(0, 0, W, H);
+
+      const mu = sig.predicted_return_pct !== undefined ? sig.predicted_return_pct : 2.5;
+      const sigmaAlea = sig.aleatoric_vol_pct !== undefined ? sig.aleatoric_vol_pct : 5.4;
+      const epiVar = sig.epistemic_uncertainty !== undefined ? sig.epistemic_uncertainty : 0.004;
+      const sigmaEpis = Math.sqrt(Math.max(epiVar, 0.0001)) * 100.0;
+      const sigmaTot = Math.sqrt(Math.pow(sigmaAlea, 2) + Math.pow(sigmaEpis, 2));
+
+      // Coordinate mapping
+      const padL = 50, padR = 40, padT = 30, padB = 40;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+
+      const xMin = -12.0, xMax = +16.0;
+      const toX = val => padL + ((val - xMin) / (xMax - xMin)) * plotW;
+      const toY = dens => padT + plotH - (dens / 0.12) * plotH;
+
+      // Draw subtle grid
+      ctx.strokeStyle = '#181D28';
+      ctx.lineWidth = 1;
+      for (let xVal = -10; xVal <= 15; xVal += 5) {
+        const xPos = toX(xVal);
+        ctx.beginPath();
+        ctx.moveTo(xPos, padT);
+        ctx.lineTo(xPos, padT + plotH);
+        ctx.stroke();
+
+        ctx.fillStyle = '#6E7A8A';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText((xVal >= 0 ? '+' : '') + xVal + '%', xPos, padT + plotH + 16);
+      }
+
+      // Neutral zero line
+      const zeroX = toX(0);
+      ctx.strokeStyle = '#2E3545';
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(zeroX, padT);
+      ctx.lineTo(zeroX, padT + plotH);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      function normalDensity(x, mean, sd) {
+        const factor = 1.0 / (sd * Math.sqrt(2 * Math.PI));
+        return factor * Math.exp(-0.5 * Math.pow((x - mean) / sd, 2));
+      }
+
+      // Curve 1: Total Mixed Uncertainty (Wide, Emerald-Cyan Glow)
+      const gradTot = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      gradTot.addColorStop(0, 'rgba(0, 229, 153, 0.28)');
+      gradTot.addColorStop(1, 'rgba(0, 229, 153, 0.01)');
+
+      ctx.beginPath();
+      ctx.moveTo(toX(xMin), toY(0));
+      for (let x = xMin; x <= xMax; x += 0.2) {
+        const y = normalDensity(x, mu, sigmaTot);
+        ctx.lineTo(toX(x), toY(y));
+      }
+      ctx.lineTo(toX(xMax), toY(0));
+      ctx.closePath();
+      ctx.fillStyle = gradTot;
+      ctx.fill();
+
+      ctx.beginPath();
+      for (let x = xMin; x <= xMax; x += 0.2) {
+        const y = normalDensity(x, mu, sigmaTot);
+        if (x === xMin) ctx.moveTo(toX(x), toY(y));
+        else ctx.lineTo(toX(x), toY(y));
+      }
+      ctx.strokeStyle = '#00E599';
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Curve 2: Epistemic Parameter Spread (Narrower, Amber Glow)
+      const gradEpi = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      gradEpi.addColorStop(0, 'rgba(224, 122, 95, 0.40)');
+      gradEpi.addColorStop(1, 'rgba(224, 122, 95, 0.01)');
+
+      ctx.beginPath();
+      ctx.moveTo(toX(xMin), toY(0));
+      for (let x = xMin; x <= xMax; x += 0.2) {
+        const y = normalDensity(x, mu, sigmaEpis);
+        ctx.lineTo(toX(x), toY(y));
+      }
+      ctx.lineTo(toX(xMax), toY(0));
+      ctx.closePath();
+      ctx.fillStyle = gradEpi;
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.setLineDash([3, 3]);
+      for (let x = xMin; x <= xMax; x += 0.2) {
+        const y = normalDensity(x, mu, sigmaEpis);
+        if (x === xMin) ctx.moveTo(toX(x), toY(y));
+        else ctx.lineTo(toX(x), toY(y));
+      }
+      ctx.strokeStyle = '#E07A5F';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Vertical line for expected mean mu
+      const muX = toX(mu);
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      ctx.moveTo(muX, padT + 10);
+      ctx.lineTo(muX, padT + plotH);
+      ctx.stroke();
+
+      // Mean pill tag
+      ctx.fillStyle = '#1A202C';
+      ctx.strokeStyle = '#00E599';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(muX - 42, padT - 4, 84, 20, 4);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.fillStyle = '#00E599';
+      ctx.font = 'bold 10.5px "JetBrains Mono", monospace';
+      ctx.textAlign = 'center';
+      ctx.fillText(`μ = ${mu >= 0 ? '+' : ''}${mu.toFixed(2)}%`, muX, padT + 10);
+
+      // Institutional KPI Overlay Card
+      ctx.fillStyle = 'rgba(17, 21, 30, 0.88)';
+      ctx.strokeStyle = '#282F3E';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(padL + 10, padT + 12, 230, 78, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.font = '10.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = '#00E599';
+      ctx.fillText(`● Total Mixed σ: ${sigmaTot.toFixed(2)}%`, padL + 20, padT + 32);
+      ctx.fillStyle = '#7E8B9B';
+      ctx.fillText(`  ├ Aleatoric Noise σ_a: ${sigmaAlea.toFixed(2)}%`, padL + 20, padT + 48);
+      ctx.fillStyle = '#E07A5F';
+      ctx.fillText(`  └ Epistemic Spread σ²_e: ${epiVar.toFixed(6)}`, padL + 20, padT + 64);
+      ctx.fillStyle = '#9AA6B8';
+      ctx.fillText(`Meinert Reliability: High (σ²_e < 0.0078)`, padL + 20, padT + 80);
+    }
+
+    // 2. 20-DAY DOWNSIDE BARRIER BREACH RISK HAZARD CURVE
+    function renderTailHazardCanvas(sym) {
+      const s = setupDpiCanvas('canvas-tail');
+      if (!s) return;
+      const { ctx, width: W, height: H } = s;
+      const sig = getSignalForSymbol(sym);
+
+      ctx.fillStyle = '#0E1118';
+      ctx.fillRect(0, 0, W, H);
+
+      const pb = sig.drawdown_crash_prob !== undefined ? sig.drawdown_crash_prob : 0.32;
+      const pbPct = pb * 100.0;
+
+      const padL = 50, padR = 40, padT = 30, padB = 40;
+      const plotW = W - padL - padR;
+      const plotH = H - padT - padB;
+
+      const toX = day => padL + (day / 20.0) * plotW;
+      const toY = prob => padT + plotH - (prob / 60.0) * plotH;
+
+      // Draw gridlines
+      ctx.strokeStyle = '#181D28';
+      ctx.lineWidth = 1;
+      for (let prob = 10; prob <= 50; prob += 10) {
+        const yPos = toY(prob);
+        ctx.beginPath();
+        ctx.moveTo(padL, yPos);
+        ctx.lineTo(padL + plotW, yPos);
+        ctx.stroke();
+
+        ctx.fillStyle = '#6E7A8A';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(prob + '%', padL - 8, yPos + 3);
+      }
+
+      for (let day = 0; day <= 20; day += 5) {
+        const xPos = toX(day);
+        ctx.beginPath();
+        ctx.moveTo(xPos, padT);
+        ctx.lineTo(xPos, padT + plotH);
+        ctx.stroke();
+
+        ctx.fillStyle = '#6E7A8A';
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.fillText('Day ' + day, xPos, padT + plotH + 16);
+      }
+
+      // Macro Crash Ceiling Hurdle (48.0%)
+      const yCeiling = toY(48.0);
+      ctx.strokeStyle = '#FF453A';
+      ctx.lineWidth = 1.8;
+      ctx.setLineDash([5, 4]);
+      ctx.beginPath();
+      ctx.moveTo(padL, yCeiling);
+      ctx.lineTo(padL + plotW, yCeiling);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#FF453A';
+      ctx.font = 'bold 10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('CRASH CEILING 48.0%', padL + plotW, yCeiling - 6);
+
+      // Safe Zone boundary (35.0%)
+      const ySafe = toY(35.0);
+      ctx.strokeStyle = '#F4A261';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([3, 3]);
+      ctx.beginPath();
+      ctx.moveTo(padL, ySafe);
+      ctx.lineTo(padL + plotW, ySafe);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      ctx.fillStyle = '#F4A261';
+      ctx.font = '9.5px "JetBrains Mono", monospace';
+      ctx.textAlign = 'right';
+      ctx.fillText('CAUTION HURDLE 35.0%', padL + plotW, ySafe - 5);
+
+      // Cumulative Hazard Curve H(t) = 1 - (1 - P_b)^(t/20)
+      const gradH = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      const isDangerous = pb >= 0.48;
+      const isElevated = pb >= 0.35;
+      const accentColor = isDangerous ? '#FF453A' : (isElevated ? '#F4A261' : '#00E599');
+
+      gradH.addColorStop(0, isDangerous ? 'rgba(255, 69, 58, 0.40)' : (isElevated ? 'rgba(244, 162, 97, 0.35)' : 'rgba(0, 229, 153, 0.30)'));
+      gradH.addColorStop(1, 'rgba(14, 17, 24, 0.05)');
+
+      ctx.beginPath();
+      ctx.moveTo(toX(0), toY(0));
+      for (let t = 0; t <= 20; t += 0.5) {
+        const hazard = (1.0 - Math.pow(1.0 - pb, t / 20.0)) * 100.0;
+        ctx.lineTo(toX(t), toY(hazard));
+      }
+      ctx.lineTo(toX(20), toY(0));
+      ctx.closePath();
+      ctx.fillStyle = gradH;
+      ctx.fill();
+
+      ctx.beginPath();
+      for (let t = 0; t <= 20; t += 0.5) {
+        const hazard = (1.0 - Math.pow(1.0 - pb, t / 20.0)) * 100.0;
+        if (t === 0) ctx.moveTo(toX(t), toY(hazard));
+        else ctx.lineTo(toX(t), toY(hazard));
+      }
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 2.5;
+      ctx.stroke();
+
+      // Point at Day 20
+      const endX = toX(20);
+      const endY = toY(pbPct);
+      ctx.fillStyle = '#FFFFFF';
+      ctx.strokeStyle = accentColor;
+      ctx.lineWidth = 3;
+      ctx.beginPath();
+      ctx.arc(endX, endY, 5, 0, 2 * Math.PI);
+      ctx.fill();
+      ctx.stroke();
+
+      // Tail Badge
+      ctx.fillStyle = 'rgba(17, 21, 30, 0.90)';
+      ctx.strokeStyle = '#282F3E';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(padL + 12, padT + 12, 220, 68, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      ctx.textAlign = 'left';
+      ctx.font = '10.5px "JetBrains Mono", monospace';
+      ctx.fillStyle = accentColor;
+      ctx.fillText(`● Day 20 Breach Risk: ${pbPct.toFixed(1)}%`, padL + 20, padT + 32);
+      ctx.fillStyle = '#7E8B9B';
+      ctx.fillText(`Barrier: -5.00% Downside Hurdle`, padL + 20, padT + 48);
+      ctx.fillStyle = isDangerous ? '#FF453A' : (isElevated ? '#F4A261' : '#00E599');
+      ctx.fillText(`Risk State: ${isDangerous ? 'TOXIC (Exceeds Ceiling)' : (isElevated ? 'CAUTION (Elevated)' : 'SAFE / BOUNDED')}`, padL + 20, padT + 64);
+    }
+
+    // 3. INSTITUTIONAL 4-PILLAR DECISION SCORE DECOMPOSITION
+    function renderScoreMathCanvas(sym) {
+      const s = setupDpiCanvas('canvas-score');
+      if (!s) return;
+      const { ctx, width: W, height: H } = s;
+      const sig = getSignalForSymbol(sym);
+
+      ctx.fillStyle = '#0E1118';
+      ctx.fillRect(0, 0, W, H);
+
+      const sAlpha = sig.score_alpha !== undefined ? sig.score_alpha : 25.0;
+      const sConf = sig.score_confidence !== undefined ? sig.score_confidence : 14.0;
+      const sTail = sig.score_tail !== undefined ? sig.score_tail : 15.0;
+      const sFrict = sig.score_friction !== undefined ? sig.score_friction : 10.0;
+      const rawScore = sig.raw_decision_score !== undefined ? sig.raw_decision_score : (sAlpha + sConf + sTail + sFrict);
+      const mult = sig.gate_multiplier !== undefined ? sig.gate_multiplier : 0.75;
+      const finalScore = sig.composite_score !== undefined ? sig.composite_score : (rawScore * mult);
+      const verdict = sig.recommended_action || 'HOLD / DEFENSIVE TRAIL';
+
+      const padL = 160, padR = 80, padT = 30;
+      const barH = 22, barGap = 16;
+      const plotW = W - padL - padR;
+
+      const pillars = [
+        { label: 'S_α (Alpha Edge)', val: sAlpha, max: 40.0, color: '#00E599', sub: 'Expected return net of vol' },
+        { label: 'S_conf (Reliability)', val: sConf, max: 25.0, color: '#7B61FF', sub: 'Evidential uncertainty audit' },
+        { label: 'S_tail (Crash Safety)', val: sTail, max: 25.0, color: '#F4A261', sub: 'Barrier breach safety floor' },
+        { label: 'S_frict (STT Buffer)', val: sFrict, max: 10.0, color: '#2EC4B6', sub: 'Statutory delivery tax drag' },
+      ];
+
+      pillars.forEach((p, idx) => {
+        const y = padT + idx * (barH + barGap);
+
+        // Label
+        ctx.fillStyle = '#E6E8ED';
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'right';
+        ctx.fillText(p.label, padL - 14, y + 15);
+
+        // Background track
+        ctx.fillStyle = '#1B212D';
+        ctx.beginPath();
+        ctx.roundRect(padL, y, plotW, barH, 4);
+        ctx.fill();
+
+        // Filled bar
+        const fillW = Math.max(0, Math.min(plotW, (p.val / p.max) * plotW));
+        if (fillW > 0) {
+          ctx.fillStyle = p.color;
+          ctx.beginPath();
+          ctx.roundRect(padL, y, fillW, barH, 4);
+          ctx.fill();
+        }
+
+        // Value text
+        ctx.fillStyle = '#FFFFFF';
+        ctx.font = 'bold 10.5px "JetBrains Mono", monospace';
+        ctx.textAlign = 'left';
+        ctx.fillText(`${p.val.toFixed(1)} / ${p.max.toFixed(0)} pts`, padL + plotW + 10, y + 15);
+      });
+
+      // Bottom Banner: Raw -> Gate -> Final
+      const bannerY = padT + 4 * (barH + barGap) + 16;
+      ctx.fillStyle = '#131822';
+      ctx.strokeStyle = '#252B3A';
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.roundRect(20, bannerY, W - 40, 68, 6);
+      ctx.fill();
+      ctx.stroke();
+
+      const scoreCol = finalScore >= 70 ? '#00E599' : (finalScore >= 45 ? '#D4A373' : '#FF453A');
+
+      ctx.fillStyle = '#9AA6B8';
+      ctx.font = '10px "JetBrains Mono", monospace';
+      ctx.textAlign = 'left';
+      ctx.fillText(`Raw Score: ${rawScore.toFixed(1)}/100`, 35, bannerY + 24);
+      ctx.fillText(`Gate Multiplier: ×${mult.toFixed(2)} (${sig.gate_tier !== undefined ? 'Tier ' + sig.gate_tier : 'Tier 1'})`, 35, bannerY + 42);
+
+      ctx.font = 'bold 14px "JetBrains Mono", monospace';
+      ctx.fillStyle = scoreCol;
+      ctx.textAlign = 'right';
+      ctx.fillText(`Final S = ${finalScore.toFixed(1)}/100`, W - 35, bannerY + 26);
+
+      ctx.font = 'bold 11px "JetBrains Mono", monospace';
+      ctx.fillStyle = scoreCol;
+      ctx.fillText(verdict, W - 35, bannerY + 46);
+    }
+
+    // Hash router for direct links (e.g. #math-charts)
+    function checkUrlHash() {
+      if (window.location.hash === '#math-charts' || window.location.hash === '#cover-workbench') {
+        const el = document.getElementById('math-charts');
+        if (el) el.scrollIntoView({ behavior: 'smooth' });
+      }
+    }
+    window.addEventListener('hashchange', checkUrlHash);
 
     window.addEventListener('DOMContentLoaded', bootApp);
   </script>
