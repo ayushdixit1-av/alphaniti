@@ -324,6 +324,69 @@
     }
     .nav-icon { font-size: 13px; width: 16px; text-align: center; }
 
+        /* Watchlist Slide-Up Feature */
+    .sidebar-upper-group {
+      display: flex;
+      flex-direction: column;
+      transition: max-height 0.3s cubic-bezier(0.4, 0, 0.2, 1), opacity 0.22s ease, margin 0.22s ease;
+      max-height: 600px;
+      opacity: 1;
+      overflow: hidden;
+    }
+    .sidebar-upper-group.collapsed {
+      max-height: 0;
+      opacity: 0;
+      margin: 0;
+      pointer-events: none;
+    }
+
+    .watchlist-slide-handle {
+      width: 100%;
+      height: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      background: var(--bg-surface);
+      border-top: 1px solid var(--border-color);
+      border-bottom: 1px solid var(--border-subtle);
+      transition: background 0.12s;
+    }
+    .watchlist-slide-handle:hover {
+      background: var(--bg-hover);
+    }
+    .slide-indicator-bar {
+      width: 32px;
+      height: 3px;
+      border-radius: 2px;
+      background: var(--text-muted);
+    }
+
+    .btn-slide-toggle {
+      background: var(--bg-card);
+      border: 1px solid var(--border-color);
+      border-radius: 4px;
+      padding: 2px 7px;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--text-secondary);
+      cursor: pointer;
+      display: inline-flex;
+      align-items: center;
+      gap: 3px;
+      transition: all 0.12s;
+    }
+    .btn-slide-toggle:hover {
+      background: var(--bg-hover);
+      color: var(--text-primary);
+      border-color: var(--accent-green);
+    }
+    .btn-slide-toggle.expanded {
+      background: var(--accent-green-bg);
+      color: var(--accent-green);
+      border-color: rgba(21, 130, 83, 0.3);
+    }
+
     .watchlist-box {
       flex: 1;
       display: flex;
@@ -1088,82 +1151,95 @@
   <div class="app-body">
     <!-- LEFT SIDEBAR -->
     <aside class="app-sidebar">
-      <!-- MODE SELECTOR -->
-      <div class="mode-selector">
-        <div class="mode-item active" onclick="setMode('exec')">
-          <div class="mode-item-dot"></div>
-          <div class="mode-item-content">
-            <div class="mode-item-title">Execution Mode</div>
-            <div class="mode-item-sub">Key insights &amp; decision</div>
+      <!-- COLLAPSIBLE UPPER GROUP (SLIDES AWAY WHEN WATCHLIST EXPANDS) -->
+      <div class="sidebar-upper-group" id="sidebar-upper-group">
+        <!-- MODE SELECTOR -->
+        <div class="mode-selector">
+          <div class="mode-item active" onclick="setMode('exec')">
+            <div class="mode-item-dot"></div>
+            <div class="mode-item-content">
+              <div class="mode-item-title">Execution Mode</div>
+              <div class="mode-item-sub">Key insights &amp; decision</div>
+            </div>
+            <span style="font-size:10px; color:var(--text-muted);">∨</span>
           </div>
-          <span style="font-size:10px; color:var(--text-muted);">∨</span>
-        </div>
-        <div class="mode-item" onclick="setMode('quant')">
-          <div class="mode-item-dot" style="background:#586361;"></div>
-          <div class="mode-item-content">
-            <div class="mode-item-title">Quant Research Mode</div>
-            <div class="mode-item-sub">Model analysis &amp; diagnostics</div>
+          <div class="mode-item" onclick="setMode('quant')">
+            <div class="mode-item-dot" style="background:#586361;"></div>
+            <div class="mode-item-content">
+              <div class="mode-item-title">Quant Research Mode</div>
+              <div class="mode-item-sub">Model analysis &amp; diagnostics</div>
+            </div>
+          </div>
+          <div class="mode-item" onclick="setMode('risk')">
+            <div class="mode-item-dot" style="background:#586361;"></div>
+            <div class="mode-item-content">
+              <div class="mode-item-title">Risk Audit Mode</div>
+              <div class="mode-item-sub">DRO, stress tests &amp; validation</div>
+            </div>
           </div>
         </div>
-        <div class="mode-item" onclick="setMode('risk')">
-          <div class="mode-item-dot" style="background:#586361;"></div>
-          <div class="mode-item-content">
-            <div class="mode-item-title">Risk Audit Mode</div>
-            <div class="mode-item-sub">DRO, stress tests &amp; validation</div>
+
+        <!-- 10 RESEARCH MODULES -->
+        <nav class="nav-list">
+          <div class="nav-item active" id="nav-overview" onclick="selectNav('overview')">
+            <span class="nav-icon">🏠</span>
+            <span>Overview</span>
           </div>
-        </div>
+          <div class="nav-item" id="nav-screener" onclick="selectNav('screener')">
+            <span class="nav-icon">☷</span>
+            <span>Screener (52)</span>
+          </div>
+          <div class="nav-item" id="nav-company" onclick="selectNav('company')">
+            <span class="nav-icon">📄</span>
+            <span>Company Research</span>
+          </div>
+          <div class="nav-item" id="nav-forecast" onclick="selectNav('forecast')">
+            <span class="nav-icon">📈</span>
+            <span>Forecast Lab</span>
+          </div>
+          <div class="nav-item" id="nav-risk" onclick="selectNav('risk')">
+            <span class="nav-icon">🛡️</span>
+            <span>Risk &amp; DRO</span>
+          </div>
+          <div class="nav-item" id="nav-portfolio" onclick="selectNav('portfolio')">
+            <span class="nav-icon">⚖️</span>
+            <span>Portfolio Optimizer</span>
+          </div>
+          <div class="nav-item" id="nav-safety" onclick="selectNav('safety')">
+            <span class="nav-icon">🔒</span>
+            <span>Safety Enclave</span>
+          </div>
+          <div class="nav-item" id="nav-validation" onclick="selectNav('validation')">
+            <span class="nav-icon">🔬</span>
+            <span>Validation Audit</span>
+          </div>
+          <div class="nav-item" id="nav-ledger" onclick="selectNav('ledger')">
+            <span class="nav-icon">📑</span>
+            <span>Conserved Ledger</span>
+          </div>
+          <div class="nav-item" id="nav-governance" onclick="selectNav('governance')">
+            <span class="nav-icon">🏛️</span>
+            <span>Governance &amp; OTR</span>
+          </div>
+        </nav>
       </div>
 
-      <!-- 10 RESEARCH MODULES -->
-      <nav class="nav-list">
-        <div class="nav-item active" id="nav-overview" onclick="selectNav('overview')">
-          <span class="nav-icon">🏠</span>
-          <span>Overview</span>
-        </div>
-        <div class="nav-item" id="nav-screener" onclick="selectNav('screener')">
-          <span class="nav-icon">☷</span>
-          <span>Screener (52)</span>
-        </div>
-        <div class="nav-item" id="nav-company" onclick="selectNav('company')">
-          <span class="nav-icon">📄</span>
-          <span>Company Research</span>
-        </div>
-        <div class="nav-item" id="nav-forecast" onclick="selectNav('forecast')">
-          <span class="nav-icon">📈</span>
-          <span>Forecast Lab</span>
-        </div>
-        <div class="nav-item" id="nav-risk" onclick="selectNav('risk')">
-          <span class="nav-icon">🛡️</span>
-          <span>Risk &amp; DRO</span>
-        </div>
-        <div class="nav-item" id="nav-portfolio" onclick="selectNav('portfolio')">
-          <span class="nav-icon">⚖️</span>
-          <span>Portfolio Optimizer</span>
-        </div>
-        <div class="nav-item" id="nav-safety" onclick="selectNav('safety')">
-          <span class="nav-icon">🔒</span>
-          <span>Safety Enclave</span>
-        </div>
-        <div class="nav-item" id="nav-validation" onclick="selectNav('validation')">
-          <span class="nav-icon">🔬</span>
-          <span>Validation Audit</span>
-        </div>
-        <div class="nav-item" id="nav-ledger" onclick="selectNav('ledger')">
-          <span class="nav-icon">📑</span>
-          <span>Conserved Ledger</span>
-        </div>
-        <div class="nav-item" id="nav-governance" onclick="selectNav('governance')">
-          <span class="nav-icon">🏛️</span>
-          <span>Governance &amp; OTR</span>
-        </div>
-      </nav>
+      <!-- SLIDING DIVIDER HANDLE (CLICK TO SLIDE UP / EXPAND) -->
+      <div class="watchlist-slide-handle" onclick="toggleWatchlistSlideUp()" title="Click to slide up / expand Watchlist view">
+        <span class="slide-indicator-bar"></span>
+      </div>
 
       <!-- WATCHLIST 52 -->
-      <div class="watchlist-box">
+      <div class="watchlist-box" id="watchlist-box">
         <div class="watchlist-header">
           <div class="watchlist-title-row">
-            <span>Watchlist (52)</span>
-            <span style="font-size:10px; color:var(--accent-green); cursor:pointer;" onclick="exportScreenerCSV()">📥 CSV</span>
+            <div style="display:flex; align-items:center; gap:6px;">
+              <span>Watchlist (52)</span>
+              <button class="btn-slide-toggle" id="btn-slide-toggle" onclick="toggleWatchlistSlideUp()" title="Slide up to view all 52 stocks">
+                <span id="slide-arrow">▲</span> <span id="slide-label">Slide Up</span>
+              </button>
+            </div>
+            <span style="font-size:10px; color:var(--accent-green); cursor:pointer; font-weight:600;" onclick="exportScreenerCSV()">📥 CSV</span>
           </div>
           <input type="text" class="watchlist-search-input" placeholder="Search stocks..." oninput="filterWatchlist(this.value)" />
         </div>
@@ -1541,6 +1617,28 @@
     let CURRENT_SYM = 'SBIN';
     let CURRENT_HORIZON = 20;
     let ACTIVE_TAB = 'exec';
+    let WATCHLIST_EXPANDED = false;
+
+    function toggleWatchlistSlideUp() {
+      WATCHLIST_EXPANDED = !WATCHLIST_EXPANDED;
+      const upper = document.getElementById('sidebar-upper-group');
+      const btn = document.getElementById('btn-slide-toggle');
+      const arrow = document.getElementById('slide-arrow');
+      const label = document.getElementById('slide-label');
+      
+      if (upper) {
+        upper.classList.toggle('collapsed', WATCHLIST_EXPANDED);
+      }
+      if (btn) {
+        btn.classList.toggle('expanded', WATCHLIST_EXPANDED);
+      }
+      if (arrow) {
+        arrow.innerText = WATCHLIST_EXPANDED ? '▼' : '▲';
+      }
+      if (label) {
+        label.innerText = WATCHLIST_EXPANDED ? 'Slide Down' : 'Slide Up';
+      }
+    }
     let ACTIVE_NAV = 'overview';
 
     const COMPANY_METADATA = {
