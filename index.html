@@ -435,7 +435,7 @@
       flex: 1;
       position: relative;
       min-height: 340px;
-      background: #131722;
+      background: var(--bg-main);
       display: flex;
       flex-direction: column;
     }
@@ -447,7 +447,7 @@
     #cover-rsi-chart {
       height: 76px;
       width: 100%;
-      border-top: 1px solid #23262F;
+      border-top: 1px solid var(--border-subtle);
     }
     .workbench-chart-overlay {
       position: absolute;
@@ -2016,6 +2016,7 @@
               </div>
             </div>
 
+            <div id="cover-rationale-bullets" style="display:none;"></div>
             <div class="rationale-dual-grid" id="cover-rationale-grid">
               <!-- CARD 1: SIMPLE / LAYMAN LANGUAGE -->
               <div class="rationale-card layman-card" id="card-cover-layman">
@@ -3243,7 +3244,8 @@
       const sector = chartPayload.sector || sig.sector || 'Equity';
 
       document.getElementById('art-title').innerText = `NSE:${sym} — ${sector}`;
-      document.getElementById('art-subtitle').innerText = `120D OHLCV & 20D Conformal Forecast (q̂=1.3644)`;
+      document.getElementById('art-subtitle').innerText = const qHat = (SNAPSHOT && SNAPSHOT.signals && SNAPSHOT.signals.conformal_q_hat) ? SNAPSHOT.signals.conformal_q_hat.toFixed(4) : '1.3644';
+      document.getElementById('art-subtitle').innerText = `120D OHLCV & 20D Conformal Forecast (q̂=${qHat})`;
 
       // Update 48px Top Bar HUD
       const hudSym = document.getElementById('ws-hud-sym');
@@ -3307,15 +3309,16 @@
         document.getElementById('c-stat-gamma').style.color = gCol;
         document.getElementById('c-stat-pb').innerText = `${(sig.drawdown_crash_prob * 100).toFixed(1)}%`;
 
-        // Decision Score & Verdict Telemetry
-        const compScore = sig.composite_score !== undefined ? sig.composite_score : (sig.decision_score ? sig.decision_score.final_score : 0.0);
-        const rawScore = sig.raw_decision_score !== undefined ? sig.raw_decision_score : compScore;
-        const verdict = sig.recommended_action || (sig.signal_badge === 'CASH_GATE' ? 'CASH GATE' : 'QUALIFIED');
-        const scoreCol = compScore >= 70 ? 'var(--positive)' : (compScore >= 45 ? '#D4A373' : (sig.signal_badge === 'CASH_GATE' ? 'var(--warning)' : 'var(--negative)'));
+        // Decision Score & Verdict Telemetry — Powered by presentSignal (Single Source of Truth)
+        const pSig = presentSignal(sig);
+        const finalScore = pSig ? pSig.finalScore : 0.0;
+        const rawScore = pSig ? pSig.rawScore : 0.0;
+        const verdict = pSig ? pSig.verdict : 'HOLD / DEFENSIVE TRAIL';
+        const scoreCol = pSig ? pSig.scoreColor : 'var(--warning)';
 
         const elArtScore = document.getElementById('art-score');
         if (elArtScore) {
-          elArtScore.innerText = `${compScore.toFixed(1)}/100`;
+          elArtScore.innerText = `${finalScore.toFixed(1)}/100`;
           elArtScore.style.color = scoreCol;
         }
         const elArtVerdict = document.getElementById('art-verdict');
@@ -3326,7 +3329,7 @@
 
         const elCScore = document.getElementById('c-stat-score');
         if (elCScore) {
-          elCScore.innerText = `${compScore.toFixed(1)}/100`;
+          elCScore.innerText = `${finalScore.toFixed(1)}/100`;
           elCScore.style.color = scoreCol;
         }
         const elCVerdict = document.getElementById('c-stat-verdict');
@@ -3486,11 +3489,11 @@
     function resetConversation() {
       const container = document.getElementById('chat-container');
       container.innerHTML = `
-        <div class="hero-block" id="hero-welcome">
+        <div class="hero-block" id="chat-hero-welcome">
           <h1 class="serif">Institutional Equity Research &amp; Execution</h1>
           <p>Enter a query below to evaluate any NSE security or construct an integer-sized portfolio against live market data, our 3-member Evidential Deep Ensemble, Split-Conformal bounds (q̂ = 1.3644), and the Finance Act 2026 safety kernel.</p>
         </div>
-        <div class="prompt-grid" id="starter-grid">
+        <div class="prompt-grid" id="chat-starter-grid">
           <div class="prompt-card" onclick="askBrain('Should I buy RELIANCE right now with ₹1,00,000?')">
             <div class="prompt-card-title">Single-Security Evaluation</div>
             <div class="prompt-card-desc">Evaluate RELIANCE.NS for ₹1,00,000 with 20-day evidential return, tail risk, and statutory tax breakdown.</div>
@@ -3520,10 +3523,14 @@
     }
 
     async function askBrain(queryText) {
-      const hero = document.getElementById('hero-welcome');
-      const starters = document.getElementById('starter-grid');
-      if (hero) hero.style.display = 'none';
-      if (starters) starters.style.display = 'none';
+      ['hero-welcome', 'chat-hero-welcome'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
+      ['starter-grid', 'chat-starter-grid'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      });
 
       const container = document.getElementById('chat-container');
       const scrollEl = document.getElementById('chat-scroll');
@@ -3675,7 +3682,8 @@
       const { ctx, width: W, height: H } = s;
       const sig = getSignalForSymbol(sym);
 
-      ctx.fillStyle = '#0E1118';
+      const isDk = document.documentElement.getAttribute('data-theme') === 'dark';
+      ctx.fillStyle = isDk ? '#141716' : '#FAF8F3';
       ctx.fillRect(0, 0, W, H);
 
       const mu = sig.predicted_return_pct !== undefined ? sig.predicted_return_pct : 2.5;
@@ -3830,7 +3838,8 @@
       const { ctx, width: W, height: H } = s;
       const sig = getSignalForSymbol(sym);
 
-      ctx.fillStyle = '#0E1118';
+      const isDk = document.documentElement.getAttribute('data-theme') === 'dark';
+      ctx.fillStyle = isDk ? '#141716' : '#FAF8F3';
       ctx.fillRect(0, 0, W, H);
 
       const pb = sig.drawdown_crash_prob !== undefined ? sig.drawdown_crash_prob : 0.32;
