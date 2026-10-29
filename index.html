@@ -2292,7 +2292,7 @@
       });
 
       try {
-        const snapRes = await fetch('./snapshot.json');
+        const snapRes = await fetch('./snapshot.json?v=' + Date.now());
         if (snapRes.ok) {
           SNAPSHOT = await snapRes.json();
           applySignals(SNAPSHOT.signals);
