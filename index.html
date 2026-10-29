@@ -2678,7 +2678,7 @@
       return [b1, b2, b3];
     }
 
-    function loadChartForSymbol(sym) {
+    async function loadChartForSymbol(sym) {
       CURRENT_SYMBOL = sym;
       renderSidebarWatchlist();
       document.querySelectorAll('.wb-sym-btn').forEach(btn => {
