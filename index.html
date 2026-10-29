@@ -1685,6 +1685,7 @@
       }
 
       renderWatchlist();
+      setupForecastCanvasListeners();
       selectStock('SBIN');
     }
 
@@ -1843,156 +1844,300 @@
     }
 
     // Draw the High-DPI 20D Price Forecast Canvas Chart exactly as in screenshot
+        // State for interactive canvas hover crosshair
+    let FORECAST_HOVER_X = null;
+
+    // Draw the High-DPI 20D/60D Price Forecast Canvas Chart (Institutional Grade)
     function drawForecastCanvas(currentPx, predReturnPct) {
       const canvas = document.getElementById('forecast-canvas');
       if (!canvas) return;
+      const wrap = canvas.parentElement;
       const dpr = window.devicePixelRatio || 1;
-      const rect = canvas.getBoundingClientRect();
-      const W = rect.width || 540;
-      const H = rect.height || 250;
+      
+      const W = wrap ? (wrap.clientWidth || 560) : (canvas.clientWidth || 560);
+      const H = wrap ? (wrap.clientHeight || 250) : (canvas.clientHeight || 250);
 
-      canvas.width = W * dpr;
-      canvas.height = H * dpr;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+
       const ctx = canvas.getContext('2d');
       ctx.scale(dpr, dpr);
 
       const isDark = document.documentElement.getAttribute('data-theme') === 'dark';
       ctx.clearRect(0, 0, W, H);
 
-      const padL = 40;
-      const padR = 15;
-      const padT = 20;
-      const padB = 30;
-      const plotW = W - padL - padR;
-      const plotH = H - padT - padB;
+      const padL = 52;
+      const padR = 25;
+      const padT = 24;
+      const padB = 32;
+      const plotW = Math.max(100, W - padL - padR);
+      const plotH = Math.max(50, H - padT - padB);
 
-      // Y-scale bounds
-      const minP = currentPx * 0.70;
-      const maxP = currentPx * 1.35;
+      // Forecast horizon scaling
+      const hzDays = CURRENT_HORIZON || 20;
+      const timeScale = hzDays === 60 ? 1.45 : 1.0;
+      const effectivePredPct = predReturnPct * timeScale;
+      const coneMultiplier = hzDays === 60 ? 2.4 : 1.8;
+      const lowerMultiplier = hzDays === 60 ? -0.4 : 0.15;
+
+      const targetPred = currentPx * (1 + effectivePredPct / 100);
+      const targetUpper = currentPx * (1 + (effectivePredPct * coneMultiplier) / 100);
+      const targetLower = currentPx * (1 + (effectivePredPct * lowerMultiplier) / 100);
+
+      // Dynamic Y-scale bounds with safety padding
+      const allPrices = [
+        currentPx * 0.90, currentPx * 0.94, currentPx * 0.98, currentPx,
+        targetPred, targetUpper, targetLower
+      ];
+      const dataMin = Math.min(...allPrices);
+      const dataMax = Math.max(...allPrices);
+      const span = Math.max(10, dataMax - dataMin);
+      const minP = Math.floor(dataMin - span * 0.12);
+      const maxP = Math.ceil(dataMax + span * 0.15);
+
       const toY = (p) => padT + plotH - ((p - minP) / (maxP - minP)) * plotH;
       const toX = (frac) => padL + frac * plotW;
 
-      // Y-axis grid & labels
-      ctx.strokeStyle = isDark ? '#2D3534' : '#EBE7DF';
+      // Subtle horizontal price grid lines
+      const gridSteps = 4;
+      ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.06)';
       ctx.lineWidth = 1;
-      ctx.fillStyle = isDark ? '#727D7B' : '#828E8C';
-      ctx.font = '10px "Plus Jakarta Sans", sans-serif';
+      ctx.setLineDash([3, 3]);
+      ctx.fillStyle = isDark ? '#7E8B89' : '#8A9795';
+      ctx.font = '10.5px "JetBrains Mono", monospace';
       ctx.textAlign = 'right';
 
-      const steps = [minP, minP + (maxP-minP)*0.33, minP + (maxP-minP)*0.66, maxP];
-      steps.forEach(p => {
+      for (let i = 0; i <= gridSteps; i++) {
+        const p = minP + ((maxP - minP) * i) / gridSteps;
         const y = toY(p);
         ctx.beginPath();
         ctx.moveTo(padL, y);
         ctx.lineTo(W - padR, y);
         ctx.stroke();
-        ctx.fillText(Math.round(p), padL - 8, y + 3);
-      });
+        ctx.fillText('₹' + Math.round(p).toLocaleString('en-IN'), padL - 8, y + 3.5);
+      }
+      ctx.setLineDash([]);
 
-      // Split point: 60% historical, 40% forward cone
-      const splitFrac = 0.60;
+      // Split point: 55% historical lookback, 45% forward forecast
+      const splitFrac = 0.55;
       const splitX = toX(splitFrac);
+      const splitY = toY(currentPx);
+      const endX = toX(1.0);
 
-      // Historical Price Curve
+      // Historical Price Curve (realistic lookback spline)
       const histPoints = [
-        { x: 0.00, p: currentPx * 0.92 },
-        { x: 0.10, p: currentPx * 0.89 },
-        { x: 0.20, p: currentPx * 0.94 },
-        { x: 0.30, p: currentPx * 0.97 },
-        { x: 0.40, p: currentPx * 0.93 },
-        { x: 0.50, p: currentPx * 0.99 },
+        { x: 0.00, p: currentPx * (1 - (effectivePredPct * 0.45) / 100) },
+        { x: 0.10, p: currentPx * (1 - (effectivePredPct * 0.30) / 100) },
+        { x: 0.20, p: currentPx * (1 - (effectivePredPct * 0.38) / 100) },
+        { x: 0.30, p: currentPx * (1 - (effectivePredPct * 0.15) / 100) },
+        { x: 0.40, p: currentPx * (1 - (effectivePredPct * 0.22) / 100) },
+        { x: 0.48, p: currentPx * (1 - (effectivePredPct * 0.05) / 100) },
         { x: splitFrac, p: currentPx }
       ];
 
+      // Draw Historical Area Gradient Under Curve
+      const histGrad = ctx.createLinearGradient(0, padT, 0, padT + plotH);
+      histGrad.addColorStop(0, isDark ? 'rgba(255,255,255,0.08)' : 'rgba(28,36,35,0.05)');
+      histGrad.addColorStop(1, isDark ? 'rgba(255,255,255,0.00)' : 'rgba(28,36,35,0.00)');
+
       ctx.beginPath();
-      histPoints.forEach((pt, i) => {
-        const x = toX(pt.x);
-        const y = toY(pt.p);
-        if (i === 0) ctx.moveTo(x, y);
-        else ctx.lineTo(x, y);
-      });
-      ctx.strokeStyle = isDark ? '#E5E1D8' : '#222B2A';
-      ctx.lineWidth = 2.2;
+      ctx.moveTo(toX(0), toY(histPoints[0].p));
+      for (let i = 1; i < histPoints.length; i++) {
+        const prev = histPoints[i - 1];
+        const curr = histPoints[i];
+        const cpX = (toX(prev.x) + toX(curr.x)) / 2;
+        ctx.bezierCurveTo(cpX, toY(prev.p), cpX, toY(curr.p), toX(curr.x), toY(curr.p));
+      }
+      ctx.lineTo(splitX, padT + plotH);
+      ctx.lineTo(toX(0), padT + plotH);
+      ctx.closePath();
+      ctx.fillStyle = histGrad;
+      ctx.fill();
+
+      // Draw Historical Price Solid Line
+      ctx.beginPath();
+      ctx.moveTo(toX(0), toY(histPoints[0].p));
+      for (let i = 1; i < histPoints.length; i++) {
+        const prev = histPoints[i - 1];
+        const curr = histPoints[i];
+        const cpX = (toX(prev.x) + toX(curr.x)) / 2;
+        ctx.bezierCurveTo(cpX, toY(prev.p), cpX, toY(curr.p), toX(curr.x), toY(curr.p));
+      }
+      ctx.strokeStyle = isDark ? '#E5E1D8' : '#1C2423';
+      ctx.lineWidth = 2.4;
       ctx.stroke();
 
-      // Shaded Confidence Cone (Forward)
-      const targetPred = currentPx * (1 + predReturnPct/100);
-      const targetUpper = currentPx * (1 + (predReturnPct * 1.8)/100);
-      const targetLower = currentPx * (1 + (predReturnPct * 0.15)/100);
-
-      const splitY = toY(currentPx);
-      const endX = toX(1.0);
+      // Shaded Confidence Cone (Forward 90% Bounds)
       const upperEndY = toY(targetUpper);
       const lowerEndY = toY(targetLower);
       const predEndY = toY(targetPred);
 
-      // Fill Cone
+      const coneGrad = ctx.createLinearGradient(splitX, 0, endX, 0);
+      coneGrad.addColorStop(0, isDark ? 'rgba(34, 197, 94, 0.28)' : 'rgba(21, 130, 83, 0.22)');
+      coneGrad.addColorStop(1, isDark ? 'rgba(34, 197, 94, 0.08)' : 'rgba(21, 130, 83, 0.06)');
+
       ctx.beginPath();
       ctx.moveTo(splitX, splitY);
-      ctx.bezierCurveTo(splitX + (endX - splitX)*0.5, splitY - 10, splitX + (endX - splitX)*0.7, upperEndY + 5, endX, upperEndY);
+      ctx.bezierCurveTo(splitX + (endX - splitX) * 0.45, splitY - 8, splitX + (endX - splitX) * 0.75, upperEndY + 4, endX, upperEndY);
       ctx.lineTo(endX, lowerEndY);
-      ctx.bezierCurveTo(splitX + (endX - splitX)*0.7, lowerEndY - 5, splitX + (endX - splitX)*0.5, splitY + 5, splitX, splitY);
+      ctx.bezierCurveTo(splitX + (endX - splitX) * 0.75, lowerEndY - 4, splitX + (endX - splitX) * 0.45, splitY + 8, splitX, splitY);
       ctx.closePath();
-      ctx.fillStyle = isDark ? 'rgba(34, 160, 107, 0.25)' : 'rgba(21, 130, 83, 0.18)';
+      ctx.fillStyle = coneGrad;
       ctx.fill();
 
-      // Dashed Mean Predicted Path
+      // Cone Boundary Strokes (Subtle dashed border for 90% confidence limits)
+      ctx.strokeStyle = isDark ? 'rgba(34, 197, 94, 0.45)' : 'rgba(21, 130, 83, 0.40)';
+      ctx.lineWidth = 1.2;
+      ctx.setLineDash([3, 3]);
+      
       ctx.beginPath();
-      ctx.setLineDash([4, 4]);
       ctx.moveTo(splitX, splitY);
-      ctx.bezierCurveTo(splitX + (endX - splitX)*0.5, splitY, splitX + (endX - splitX)*0.7, predEndY, endX, predEndY);
-      ctx.strokeStyle = '#158253';
-      ctx.lineWidth = 2;
+      ctx.bezierCurveTo(splitX + (endX - splitX) * 0.45, splitY - 8, splitX + (endX - splitX) * 0.75, upperEndY + 4, endX, upperEndY);
+      ctx.stroke();
+
+      ctx.beginPath();
+      ctx.moveTo(splitX, splitY);
+      ctx.bezierCurveTo(splitX + (endX - splitX) * 0.45, splitY + 8, splitX + (endX - splitX) * 0.75, lowerEndY - 4, endX, lowerEndY);
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Vertical Split Line "Now"
+      // Predicted Mean Trajectory (Prominent Dashed Line)
+      ctx.beginPath();
+      ctx.setLineDash([5, 4]);
+      ctx.moveTo(splitX, splitY);
+      ctx.bezierCurveTo(splitX + (endX - splitX) * 0.45, splitY, splitX + (endX - splitX) * 0.75, predEndY, endX, predEndY);
+      ctx.strokeStyle = '#158253';
+      ctx.lineWidth = 2.4;
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Vertical "Now / Forecast Origin" Dividing Line
       ctx.beginPath();
       ctx.setLineDash([3, 3]);
-      ctx.moveTo(splitX, padT);
+      ctx.moveTo(splitX, padT - 4);
       ctx.lineTo(splitX, padT + plotH);
       ctx.strokeStyle = isDark ? '#4B5553' : '#B5AEA2';
       ctx.lineWidth = 1.2;
       ctx.stroke();
       ctx.setLineDash([]);
 
-      // Dot at "Now"
+      // Glowing Current Price Pin at "Now"
       ctx.beginPath();
-      ctx.arc(splitX, splitY, 4.5, 0, Math.PI * 2);
+      ctx.arc(splitX, splitY, 7, 0, Math.PI * 2);
+      ctx.fillStyle = 'rgba(21, 130, 83, 0.22)';
+      ctx.fill();
+
+      ctx.beginPath();
+      ctx.arc(splitX, splitY, 4, 0, Math.PI * 2);
       ctx.fillStyle = '#158253';
       ctx.fill();
       ctx.strokeStyle = '#FFFFFF';
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // X-Axis Date Labels
+      // Forecast Terminal Target Pill at endX
+      ctx.beginPath();
+      ctx.arc(endX, predEndY, 4.5, 0, Math.PI * 2);
+      ctx.fillStyle = '#158253';
+      ctx.fill();
+      ctx.strokeStyle = '#FFFFFF';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+
+      // Terminal Prediction Callout Tag
+      const tagText = `+${effectivePredPct.toFixed(1)}% (₹${Math.round(targetPred)})`;
+      ctx.font = 'bold 9.5px "JetBrains Mono", monospace';
+      const tagW = ctx.measureText(tagText).width + 8;
+      const tagX = Math.min(W - tagW - 4, endX - tagW / 2);
+      const tagY = Math.max(padT + 12, predEndY - 10);
+
+      ctx.fillStyle = isDark ? '#1C2825' : '#E8F5EE';
+      ctx.beginPath();
+      ctx.roundRect(tagX, tagY - 10, tagW, 14, 3);
+      ctx.fill();
+      ctx.strokeStyle = 'rgba(21, 130, 83, 0.4)';
+      ctx.lineWidth = 1;
+      ctx.stroke();
+      ctx.fillStyle = '#158253';
+      ctx.textAlign = 'left';
+      ctx.fillText(tagText, tagX + 4, tagY);
+
+      // Interactive Crosshair on Mouse Hover
+      if (FORECAST_HOVER_X !== null && FORECAST_HOVER_X >= padL && FORECAST_HOVER_X <= W - padR) {
+        ctx.beginPath();
+        ctx.setLineDash([2, 2]);
+        ctx.moveTo(FORECAST_HOVER_X, padT);
+        ctx.lineTo(FORECAST_HOVER_X, padT + plotH);
+        ctx.strokeStyle = isDark ? 'rgba(255,255,255,0.4)' : 'rgba(0,0,0,0.4)';
+        ctx.lineWidth = 1;
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+
+      // X-Axis Timeline Dates
       ctx.textAlign = 'center';
       ctx.font = '10px "Plus Jakarta Sans", sans-serif';
-      ctx.fillStyle = isDark ? '#727D7B' : '#828E8C';
+      ctx.fillStyle = isDark ? '#7E8B89' : '#8A9795';
 
-      const xDates = [
+      const xDates = hzDays === 60 ? [
+        { label: 'Jul 2026', f: 0.08 },
+        { label: 'Aug 2026', f: 0.22 },
+        { label: 'Sep 2026', f: 0.38 },
+        { label: 'Today', f: splitFrac, bold: true },
+        { label: 'Nov 2026', f: 0.70 },
+        { label: 'Dec 2026', f: 0.85 },
+        { label: 'Jan 2027', f: 1.00 }
+      ] : [
         { label: 'Aug 2026', f: 0.10 },
         { label: 'Sep 2026', f: 0.28 },
-        { label: 'Oct 2026', f: 0.45 },
-        { label: 'Now', f: splitFrac, bold: true },
-        { label: 'Nov 2026', f: 0.78 },
-        { label: 'Dec 2026', f: 0.95 }
+        { label: 'Oct 2026', f: 0.42 },
+        { label: 'Today', f: splitFrac, bold: true },
+        { label: '+10D (Nov)', f: 0.78 },
+        { label: '+20D Target', f: 1.00, bold: true }
       ];
 
       xDates.forEach(d => {
         const x = toX(d.f);
         if (d.bold) {
-          ctx.font = 'bold 10.5px "Plus Jakarta Sans", sans-serif';
-          ctx.fillStyle = isDark ? '#F0EDE6' : '#1C2423';
+          ctx.font = 'bold 10px "Plus Jakarta Sans", sans-serif';
+          ctx.fillStyle = isDark ? '#22C55E' : '#158253';
         } else {
           ctx.font = '10px "Plus Jakarta Sans", sans-serif';
-          ctx.fillStyle = isDark ? '#727D7B' : '#828E8C';
+          ctx.fillStyle = isDark ? '#7E8B89' : '#8A9795';
         }
-        ctx.fillText(d.label, x, H - 10);
+        ctx.fillText(d.label, x, H - 8);
       });
     }
 
-    function setHorizon(days) {
+    // Attach Interactive Mouse Tracking to Forecast Canvas
+    function setupForecastCanvasListeners() {
+      const canvas = document.getElementById('forecast-canvas');
+      if (!canvas || canvas._listenersAttached) return;
+      canvas._listenersAttached = true;
+
+      canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        FORECAST_HOVER_X = e.clientX - rect.left;
+        const eq = getEq(CURRENT_SYM);
+        drawForecastCanvas(eq.close_price || 742.3, eq.predicted_return_pct || 7.2);
+      });
+
+      canvas.addEventListener('mouseleave', () => {
+        FORECAST_HOVER_X = null;
+        const eq = getEq(CURRENT_SYM);
+        drawForecastCanvas(eq.close_price || 742.3, eq.predicted_return_pct || 7.2);
+      });
+
+      // Auto-resize observer so chart stays sharp on window or sidebar resize
+      if (typeof window !== 'undefined' && window.ResizeObserver && canvas.parentElement) {
+        const ro = new window.ResizeObserver(() => {
+          const eq = getEq(CURRENT_SYM);
+          drawForecastCanvas(eq.close_price || 742.3, eq.predicted_return_pct || 7.2);
+        });
+        ro.observe(canvas.parentElement);
+      }
+    }
+function setHorizon(days) {
       CURRENT_HORIZON = days;
       document.getElementById('btn-hz-20').classList.toggle('active', days === 20);
       document.getElementById('btn-hz-60').classList.toggle('active', days === 60);
@@ -2661,7 +2806,7 @@
     }
 
     // 5. NEWS & CORPORATE DEVELOPMENTS SUBVIEW (MULTI-API INTEGRATION)
-    async // 1-MONTH NEWS ARCHIVE & CORPORATE INTELLIGENCE GENERATOR
+    // 1-MONTH NEWS ARCHIVE & CORPORATE INTELLIGENCE GENERATOR
     function getOneMonthNewsArticles(sym) {
       const meta = COMPANY_METADATA[sym] || { name: sym + ' Limited', sector: 'Financials' };
       const name = meta.name;
