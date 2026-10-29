@@ -477,16 +477,23 @@
 
     .cover-rationale-box {
       margin: 12px 18px 0;
-      padding: 10px 14px;
+      padding: 12px 16px;
       background: var(--bg-surface);
       border: 1px solid var(--border-subtle);
-      border-radius: 6px;
+      border-radius: 8px;
     }
     .rationale-header {
       display: flex;
       align-items: center;
+      justify-content: space-between;
       gap: 10px;
-      margin-bottom: 6px;
+      margin-bottom: 10px;
+      flex-wrap: wrap;
+    }
+    .rationale-header-left {
+      display: flex;
+      align-items: center;
+      gap: 10px;
     }
     .rationale-badge {
       font-size: 10px;
@@ -494,25 +501,102 @@
       letter-spacing: 0.06em;
       color: #C96A4B;
       background: rgba(201, 106, 75, 0.12);
-      padding: 2px 7px;
+      padding: 3px 8px;
       border-radius: 4px;
     }
     .rationale-sub {
       font-size: 11px;
       color: var(--text-muted);
     }
+    .rationale-view-toggle {
+      display: flex;
+      background: rgba(0,0,0,0.3);
+      padding: 2px;
+      border-radius: 6px;
+      border: 1px solid var(--border-subtle);
+      gap: 2px;
+    }
+    .rat-toggle-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-muted);
+      font-family: inherit;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 4px 9px;
+      border-radius: 4px;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .rat-toggle-btn:hover {
+      color: var(--text-primary);
+    }
+    .rat-toggle-btn.active {
+      background: var(--bg-card);
+      color: var(--accent);
+      box-shadow: 0 1px 3px rgba(0,0,0,0.4);
+    }
+    .rationale-dual-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    @media (max-width: 900px) {
+      .rationale-dual-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+    .rationale-card {
+      background: rgba(0,0,0,0.22);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 10px 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .rationale-card.layman-card {
+      border-left: 3px solid #00E599;
+    }
+    .rationale-card.math-card {
+      border-left: 3px solid #7B61FF;
+    }
+    .rat-card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 2px;
+    }
+    .rat-card-title {
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.04em;
+    }
+    .layman-card .rat-card-title { color: #00E599; }
+    .math-card .rat-card-title { color: #7B61FF; }
+    .rat-card-chip {
+      font-size: 9px;
+      font-weight: 600;
+      padding: 1px 6px;
+      border-radius: 3px;
+      background: rgba(255,255,255,0.06);
+      color: var(--text-muted);
+    }
     .rationale-bullets {
       display: flex;
       flex-direction: column;
-      gap: 4px;
+      gap: 5px;
     }
     .rat-bullet {
       font-size: 11.5px;
       color: var(--text-secondary);
-      line-height: 1.45;
+      line-height: 1.48;
     }
     .rat-bullet strong {
       color: var(--text-primary);
+    }
+    .layman-card .rat-bullet strong {
+      color: #E6E8ED;
     }
 
     .subscore-strip {
@@ -1629,13 +1713,43 @@
 
           <div class="cover-rationale-box mono" id="cover-rationale-container">
             <div class="rationale-header">
-              <span class="rationale-badge">INSTITUTIONAL 3-BULLET RATIONALE</span>
-              <span class="rationale-sub">Drift, Noise, Epistemic Uncertainty &amp; Tail Safety Decomposition</span>
+              <div class="rationale-header-left">
+                <span class="rationale-badge">DUAL-MODE VERDICT RATIONALE</span>
+                <span class="rationale-sub">Two Perspectives: Simple Layman Language &amp; Mathematical Rigour</span>
+              </div>
+              <div class="rationale-view-toggle">
+                <button type="button" class="rat-toggle-btn active" id="btn-rat-both" onclick="setRationaleMode('both')">Both Views</button>
+                <button type="button" class="rat-toggle-btn" id="btn-rat-lame" onclick="setRationaleMode('layman')">🌱 Layman (Simple)</button>
+                <button type="button" class="rat-toggle-btn" id="btn-rat-math" onclick="setRationaleMode('math')">🔬 Mathematical</button>
+              </div>
             </div>
-            <div class="rationale-bullets" id="cover-rationale-bullets">
-              <div class="rat-bullet">• Return &amp; Noise: Evaluating 20D drift vs aleatoric volatility floor...</div>
-              <div class="rat-bullet">• Model Trust &amp; Tail: Epistemic uncertainty validated under Meinert-Gawlikowski diagnostics...</div>
-              <div class="rat-bullet">• Gate &amp; Friction: Statutory STT &amp; 4-Tier Hysteresis state machine verified...</div>
+
+            <div class="rationale-dual-grid" id="cover-rationale-grid">
+              <!-- CARD 1: SIMPLE / LAYMAN LANGUAGE -->
+              <div class="rationale-card layman-card" id="card-cover-layman">
+                <div class="rat-card-head">
+                  <span class="rat-card-title">🌱 SIMPLE EXPLANATION (EVERYDAY LANGUAGE)</span>
+                  <span class="rat-card-chip">Zero Jargon</span>
+                </div>
+                <div class="rationale-bullets" id="cover-layman-bullets">
+                  <div class="rat-bullet"><strong>Trend:</strong> Stock is moving with steady upward momentum.</div>
+                  <div class="rat-bullet"><strong>AI Confidence:</strong> AI has high confidence and low confusion on this pattern.</div>
+                  <div class="rat-bullet"><strong>Action:</strong> Safe to hold with trailing stop; market taxes won't eat your gains.</div>
+                </div>
+              </div>
+
+              <!-- CARD 2: MATHEMATICAL RIGOUR -->
+              <div class="rationale-card math-card" id="card-cover-math">
+                <div class="rat-card-head">
+                  <span class="rat-card-title">🔬 MATHEMATICAL DECOMPOSITION (QUANTITATIVE)</span>
+                  <span class="rat-card-chip">Formal Specs</span>
+                </div>
+                <div class="rationale-bullets" id="cover-math-bullets">
+                  <div class="rat-bullet">• Return &amp; Noise: Evaluating 20D drift vs aleatoric volatility floor...</div>
+                  <div class="rat-bullet">• Model Trust &amp; Tail: Epistemic uncertainty validated under NIG diagnostics...</div>
+                  <div class="rat-bullet">• Gate &amp; Friction: Statutory STT &amp; 4-Tier Hysteresis state machine verified...</div>
+                </div>
+              </div>
             </div>
           </div>
 
@@ -2491,7 +2605,80 @@
       });
     }
 
-    async function loadChartForSymbol(sym) {
+    async 
+    // Dual Rationale Mode Toggle (Layman vs Mathematical vs Both)
+    let CURRENT_RATIONALE_MODE = 'both';
+    function setRationaleMode(mode) {
+      CURRENT_RATIONALE_MODE = mode;
+      ['both', 'layman', 'math'].forEach(m => {
+        const btn = document.getElementById('btn-rat-' + (m === 'layman' ? 'lame' : m));
+        if (btn) btn.classList.toggle('active', m === mode);
+      });
+      const cardLayman = document.getElementById('card-cover-layman');
+      const cardMath = document.getElementById('card-cover-math');
+      const grid = document.getElementById('cover-rationale-grid');
+      if (!cardLayman || !cardMath) return;
+
+      if (mode === 'both') {
+        cardLayman.style.display = 'flex';
+        cardMath.style.display = 'flex';
+        if (grid) grid.style.gridTemplateColumns = window.innerWidth > 900 ? '1fr 1fr' : '1fr';
+      } else if (mode === 'layman') {
+        cardLayman.style.display = 'flex';
+        cardMath.style.display = 'none';
+        if (grid) grid.style.gridTemplateColumns = '1fr';
+      } else if (mode === 'math') {
+        cardLayman.style.display = 'none';
+        cardMath.style.display = 'flex';
+        if (grid) grid.style.gridTemplateColumns = '1fr';
+      }
+    }
+
+    // Generate plain layman explanation from quantitative signal fields
+    function generateLaymanRationale(sig) {
+      const sym = sig.symbol || 'STOCK';
+      const drift = sig.drift_20d !== undefined ? sig.drift_20d : 0;
+      const score = sig.composite_score !== undefined ? sig.composite_score : 0;
+      const rawScore = sig.raw_decision_score !== undefined ? sig.raw_decision_score : score;
+      const pb = sig.drawdown_crash_prob !== undefined ? sig.drawdown_crash_prob : (sig.p_breach || 0.35);
+      const epi = sig.epistemic_uncertainty !== undefined ? sig.epistemic_uncertainty : 0.05;
+      const action = sig.recommended_action || (score >= 60 ? 'BUY' : (score >= 40 ? 'HOLD' : 'AVOID'));
+      const mult = sig.gate_multiplier !== undefined ? sig.gate_multiplier : 1.0;
+
+      // 1. Direction / Trend
+      let b1 = '';
+      if (drift <= 0) {
+        b1 = `<strong>Direction:</strong> 🛑 <em>Falling trend.</em> ${sym} is drifting downward (${(drift*100).toFixed(1)}%). Our system automatically blocks new purchases to protect your capital.`;
+      } else if (drift > 0.04) {
+        b1 = `<strong>Direction:</strong> 🚀 <em>Strong upward push.</em> ${sym} has gained +${(drift*100).toFixed(1)}% recently with high buyer demand.`;
+      } else {
+        b1 = `<strong>Direction:</strong> 📈 <em>Gentle upward trend.</em> ${sym} is climbing slowly (+${(drift*100).toFixed(1)}%), holding above its moving average.`;
+      }
+
+      // 2. AI Confidence & Safety Check
+      let b2 = '';
+      if (pb > 0.40) {
+        b2 = `<strong>Safety Check:</strong> ⚠️ <em>High crash risk (${(pb*100).toFixed(0)}%).</em> The model sees high chance of a sharp drop, so risk gates are activated.`;
+      } else if (epi > 0.06) {
+        b2 = `<strong>AI Confidence:</strong> 🔍 <em>AI is unsure.</em> Market is turbulent and our neural ensemble shows high disagreement; proceed with caution.`;
+      } else {
+        b2 = `<strong>AI Confidence:</strong> ✅ <em>Solid & reliable.</em> Low model confusion and crash danger is small (${(pb*100).toFixed(0)}% likelihood).`;
+      }
+
+      // 3. Simple Bottom Line Verdict
+      let b3 = '';
+      if (score >= 60) {
+        b3 = `<strong>What to do:</strong> 🟢 <strong>BUY / ACCUMULATE.</strong> Overall score is strong (${score.toFixed(1)}/100). Government taxes (STT) and fees won't eat your edge.`;
+      } else if (score >= 45) {
+        b3 = `<strong>What to do:</strong> 🟡 <strong>HOLD WITH STOP-LOSS.</strong> Score is decent (${score.toFixed(1)}/100). Keep existing positions but wait for a clear breakout before adding fresh money.`;
+      } else {
+        b3 = `<strong>What to do:</strong> 🔴 <strong>AVOID / STAY IN CASH.</strong> Weak setup (${score.toFixed(1)}/100). Better to keep your money safe in the bank than risk a losing trade.`;
+      }
+
+      return [b1, b2, b3];
+    }
+
+    function loadChartForSymbol(sym) {
       CURRENT_SYMBOL = sym;
       renderSidebarWatchlist();
       document.querySelectorAll('.wb-sym-btn').forEach(btn => {
@@ -2627,19 +2814,34 @@
           elCGate.innerText = `${tier} (${mult})`;
         }
 
-        // 3-Bullet Rationale Population
-        const bullets = sig.rationale || [
-          `Return & Noise: 20D drift ${gTxt} vs aleatoric volatility ${sig.aleatoric_vol_pct.toFixed(2)}%`,
-          `Model Trust & Tail: Epistemic uncertainty ${sig.epistemic_uncertainty.toFixed(4)} with ${(sig.drawdown_crash_prob * 100).toFixed(1)}% breach likelihood`,
-          `Gate & Macro: Status ${sig.signal_badge === 'CASH_GATE' ? 'CASH PRESERVATION active' : 'execution enabled'}`
+        // Dual-Mode Rationale Population (Layman & Mathematical)
+        const mathBullets = sig.rationale || [
+          `Return & Noise: 20D Drift ${gTxt} vs Vol ${sig.aleatoric_vol_pct ? sig.aleatoric_vol_pct.toFixed(2) : '4.50'}% → Alpha Score ${sig.score_alpha ? sig.score_alpha.toFixed(1) : '20.0'}/40 pts.`,
+          `Model & Tail: Trust ${sig.score_confidence ? sig.score_confidence.toFixed(1) : '15.0'}/25 pts | Tail Safety ${sig.score_tail ? sig.score_tail.toFixed(1) : '15.0'}/25 pts (Barrier Breach Likelihood: ${((sig.drawdown_crash_prob||0.32)*100).toFixed(1)}% vs 48% cap).`,
+          `Gate & Execution: Friction Buffer ${sig.score_friction ? sig.score_friction.toFixed(1) : '10.0'}/10 pts | Tier ${sig.gate_tier||1} Gate (${(sig.gate_multiplier||0.75).toFixed(2)}x) → Final Composite Score ${(sig.composite_score||0).toFixed(1)}/100.`
         ];
+        const laymanBullets = generateLaymanRationale(sig);
+
+        // Populate Cover Layman Card
+        const coverLaymanEl = document.getElementById('cover-layman-bullets');
+        if (coverLaymanEl) {
+          coverLaymanEl.innerHTML = laymanBullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
+        }
+
+        // Populate Cover Mathematical Card
+        const coverMathEl = document.getElementById('cover-math-bullets');
+        if (coverMathEl) {
+          coverMathEl.innerHTML = mathBullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
+        }
+
+        // Backward compatibility for old container if referenced
         const ratBulletsEl = document.getElementById('cover-rationale-bullets');
         if (ratBulletsEl) {
-          ratBulletsEl.innerHTML = bullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
+          ratBulletsEl.innerHTML = mathBullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
         }
         const artRatBulletsEl = document.getElementById('art-rationale-bullets');
         if (artRatBulletsEl) {
-          artRatBulletsEl.innerHTML = bullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
+          artRatBulletsEl.innerHTML = mathBullets.map(b => `<div class="rat-bullet">• ${b}</div>`).join('');
         }
       }
 
