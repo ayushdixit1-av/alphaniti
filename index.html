@@ -11,6 +11,10 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400&family=Plus+Jakarta+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet" />
   <script src="https://unpkg.com/lightweight-charts@4.1.1/dist/lightweight-charts.standalone.production.js"></script>
+  <!-- KaTeX Mathematical Typography Engine -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css" />
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
 
   <style>
     :root {
@@ -2684,6 +2688,32 @@ function setHorizon(days) {
       renderMathProofBody(idx);
     }
 
+        function renderAllMathIn(element) {
+      if (!element) return;
+      const runKatex = () => {
+        if (window.renderMathInElement) {
+          try {
+            renderMathInElement(element, {
+              delimiters: [
+                { left: '$$', right: '$$', display: true },
+                { left: '$', right: '$', display: false }
+              ],
+              throwOnError: false
+            });
+          } catch (e) {
+            console.warn('KaTeX render error:', e);
+          }
+        }
+      };
+      if (window.renderMathInElement) {
+        runKatex();
+      } else {
+        setTimeout(runKatex, 150);
+        setTimeout(runKatex, 600);
+        setTimeout(runKatex, 1500);
+      }
+    }
+
     function renderMathProofBody(idx) {
       const box = document.getElementById('math-proof-body');
       if (!box) return;
@@ -2694,6 +2724,8 @@ function setHorizon(days) {
       const u = eq.epistemic_uncertainty || 0.0038;
       const alea = eq.aleatoric_vol_pct || 4.2;
       const pb = eq.drawdown_crash_prob || 0.183;
+      const upper = (px * (1 + (mu * 1.6)/100)).toFixed(2);
+      const lower = (px * (1 + (mu * 0.15 - alea * 0.8)/100)).toFixed(2);
 
       if (idx === 1) {
         // PROOF 1: NIG Evidential Uncertainty Decomposition
@@ -2701,38 +2733,39 @@ function setHorizon(days) {
           <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:18px;">
             <!-- DERIVATION TEXT -->
             <div style="background:var(--bg-surface); padding:16px; border-radius:8px; border:1px solid var(--border-subtle); display:flex; flex-direction:column; gap:10px;">
-              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">
-                Theorem 1: Normal-Inverse-Gamma (NIG) Dual Uncertainty Decomposition
+              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); display:flex; justify-content:space-between; align-items:center;">
+                <span>Theorem 1: Normal-Inverse-Gamma (NIG) Dual Uncertainty Decomposition</span>
+                <span style="font-size:10px; font-weight:700; background:var(--accent-green-bg); color:var(--accent-green); padding:2px 8px; border-radius:4px; border:1px solid rgba(21,130,83,0.2);">Rigorous Derivation</span>
               </div>
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                The market return $y \sim \mathcal{N}(\mu, \sigma^2)$ is parameterized through conjugate prior NIG$(\gamma, v, \alpha, \beta)$. Our GRU-Attention model outputs conjugate hyper-parameters directly from temporal features $x_t$:
+              <div style="font-size:12.5px; color:var(--text-secondary); line-height:1.65;">
+                The market return $y \\sim \\mathcal{N}(\\mu, \\sigma^2)$ is parameterized through conjugate prior $\\text{NIG}(\\gamma, v, \\alpha, \\beta)$. Our GRU-Attention model outputs conjugate hyper-parameters directly from temporal features $x_t$:
               </div>
-              <div style="background:var(--bg-card); padding:10px 14px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:11.5px; border-left:3px solid var(--accent-green); line-height:1.7;">
-                • Point Mean (Expected 20D Return): <b>E[μ] = γ = +${mu.toFixed(2)}%</b><br/>
-                • Epistemic Variance (Model Uncertainty): <b>Var[μ] = β / (v(α - 1)) = ${u.toFixed(5)}</b><br/>
-                • Aleatoric Variance (Observation Noise): <b>E[σ²] = β / (α - 1) = ${(alea*0.01).toFixed(4)}</b>
+              <div style="background:var(--bg-card); padding:12px 14px; border-radius:6px; font-size:12px; border-left:3px solid var(--accent-green); line-height:1.85; color:var(--text-primary);">
+                • Point Mean (Expected 20D Return): <b>$\\mathbb{E}[\\mu] = \\gamma = +${mu.toFixed(2)}\\%$</b><br/>
+                • Epistemic Variance (Model Uncertainty): <b>$\\text{Var}[\\mu] = \\frac{\\beta}{v(\\alpha - 1)} = ${u.toFixed(5)}</b><br/>
+                • Aleatoric Variance (Observation Noise): <b>$\\mathbb{E}[\\sigma^2] = \\frac{\\beta}{\\alpha - 1} = ${(alea * 0.01).toFixed(4)}</b>
               </div>
-              <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.55;">
-                <b>Mathematical Proof:</b> By integrating out $\sigma^2$ across the joint posterior, the marginal likelihood follows a Student-t distribution $t_{2\alpha}\left(\gamma, \frac{\beta}{v\alpha}\right)$. Epistemic variance contracts as virtual observations $v \to \infty$, isolating pure market stochasticity without over-confidence.
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.65;">
+                <b>Mathematical Proof:</b> By integrating out $\\sigma^2$ across the joint posterior, the marginal likelihood follows a Student-$t$ distribution $t_{2\\alpha}\\left(\\gamma, \\frac{\\beta}{v\\alpha}\\right)$. Epistemic variance contracts as virtual observations $v \\to \\infty$, isolating pure market stochasticity without over-confidence.
               </div>
               <div style="display:flex; gap:10px; font-size:11px; margin-top:2px;">
-                <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Live Var[μ]: ${u.toFixed(5)}</span>
-                <span class="mono" style="background:var(--accent-blue-bg); color:var(--accent-blue); font-weight:700; padding:2px 8px; border-radius:4px;">Virtual Count v: 142.6</span>
-                <span class="mono" style="background:var(--accent-amber-bg); color:var(--accent-amber); font-weight:700; padding:2px 8px; border-radius:4px;">Shape α: 3.84</span>
+                <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Live $\\text{Var}[\\mu]$: ${u.toFixed(5)}</span>
+                <span class="mono" style="background:var(--accent-blue-bg); color:var(--accent-blue); font-weight:700; padding:2px 8px; border-radius:4px;">Virtual Count $v$: 142.6</span>
+                <span class="mono" style="background:var(--accent-amber-bg); color:var(--accent-amber); font-weight:700; padding:2px 8px; border-radius:4px;">Shape $\\alpha$: 3.84</span>
               </div>
             </div>
 
             <!-- MATHEMATICAL CHART 1 -->
             <div style="background:var(--bg-card); padding:12px; border-radius:8px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px;">
               <div style="font-weight:700; font-size:11.5px; color:var(--text-primary); display:flex; justify-content:space-between;">
-                <span>Chart 1: NIG Bivariate Posterior Surface p(μ, σ²)</span>
+                <span>Chart 1: NIG Bivariate Posterior Surface $p(\\mu, \\sigma^2)$</span>
                 <span style="font-size:10px; color:var(--accent-green); font-weight:600;">Contour Contraction</span>
               </div>
               <div style="height:220px; width:100%; position:relative; overflow:hidden;">
                 <canvas id="math-chart-canvas" style="width:100%; height:100%; display:block;"></canvas>
               </div>
               <div style="font-size:10px; color:var(--text-muted); text-align:center;">
-                Concentric contours prove rapid convergence to the true posterior mode γ = +${mu.toFixed(2)}%
+                Concentric contours prove rapid convergence to the true posterior mode $\\gamma = +${mu.toFixed(2)}\\%$
               </div>
             </div>
           </div>
@@ -2742,25 +2775,28 @@ function setHorizon(days) {
         box.innerHTML = `
           <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:18px;">
             <div style="background:var(--bg-surface); padding:16px; border-radius:8px; border:1px solid var(--border-subtle); display:flex; flex-direction:column; gap:10px;">
-              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">
-                Theorem 2: Finite-Sample Split-Conformal Coverage Guarantee (Vovk et al.)
+              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); display:flex; justify-content:space-between; align-items:center;">
+                <span>Theorem 2: Finite-Sample Split-Conformal Coverage Guarantee (Vovk et al.)</span>
+                <span style="font-size:10px; font-weight:700; background:var(--accent-blue-bg); color:var(--accent-blue); padding:2px 8px; border-radius:4px; border:1px solid rgba(28,100,180,0.2);">Non-Asymptotic</span>
               </div>
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                For calibration observations $(X_i, Y_i)_{i=1}^n$ exchangeable with test sample $(X_{n+1}, Y_{n+1})$, define the studentized non-conformity score $s_i = |Y_i - \hat{\mu}(X_i)| / \hat{\sigma}(X_i)$.
+              <div style="font-size:12.5px; color:var(--text-secondary); line-height:1.65;">
+                For calibration observations $(X_i, Y_i)_{i=1}^n$ exchangeable with test sample $(X_{n+1}, Y_{n+1})$, define the studentized non-conformity score $s_i = \\frac{|Y_i - \\hat{\\mu}(X_i)|}{\\hat{\\sigma}(X_i)}$.
               </div>
-              <div style="background:var(--bg-card); padding:10px 14px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:11.5px; border-left:3px solid var(--accent-blue); line-height:1.7;">
-                • Critical Quantile (1-α = 0.90): <b>q̂ = Quantile({s_i}, ⌈(n+1)(1-α)⌉ / n) = 1.3644</b><br/>
-                • Conformal Upper Bound: <b>₹${(px * (1 + (mu*1.6)/100)).toFixed(2)} (+${(mu*1.6).toFixed(1)}%)</b><br/>
-                • Conformal Lower Floor: <b>₹${(px * (1 + (mu*0.15 - alea*0.8)/100)).toFixed(2)}</b>
+              <div style="background:var(--bg-card); padding:12px 14px; border-radius:6px; font-size:12px; border-left:3px solid var(--accent-blue); line-height:1.85; color:var(--text-primary);">
+                • Critical Quantile ($1 - \\alpha = 0.90$): <b>$\\hat{q} = \\text{Quantile}\\left(\\{s_i\\}, \\frac{\\lceil(n+1)(1-\\alpha)\\rceil}{n}\\right) = 1.3644$</b><br/>
+                • Conformal Upper Bound: <b>₹${upper} (+${(mu*1.6).toFixed(1)}%)</b><br/>
+                • Conformal Lower Floor: <b>₹${lower}</b>
               </div>
-              <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.55;">
-                <b>Mathematical Proof:</b> Under the exchangeability hypothesis, the rank of $s_{n+1}$ among $\{s_1, ..., s_n, s_{n+1}\}$ is uniformly distributed over $\{1, ..., n+1\}$. Therefore:
-                <div class="mono" style="margin:4px 0; font-weight:700; color:var(--accent-green);">P(Y_{n+1} ∈ C_{0.90}(X_{n+1})) ≥ 1 - α = 90.0%</div>
-                This guarantee holds non-asymptotically with zero assumptions on market return normality.
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.65;">
+                <b>Mathematical Proof:</b> Under exchangeability, the rank of $s_{n+1}$ among $\\{s_1, \\dots, s_n, s_{n+1}\\}$ is uniformly distributed over $\\{1, \\dots, n+1\\}$. Therefore:
+                <div style="margin:6px 0; font-weight:700; color:var(--accent-green); font-size:12.5px;">
+                  $$\\mathbb{P}\\left(Y_{n+1} \\in \\mathcal{C}_{0.90}(X_{n+1})\\right) \\ge 1 - \\alpha = 90.0\\%$$
+                </div>
+                This guarantee holds non-asymptotically with zero Gaussian or distribution assumptions.
               </div>
               <div style="display:flex; gap:10px; font-size:11px; margin-top:2px;">
                 <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Empirical Coverage: 91.4%</span>
-                <span class="mono" style="background:var(--accent-blue-bg); color:var(--accent-blue); font-weight:700; padding:2px 8px; border-radius:4px;">Spread: ±₹${((px * (mu*1.6)/100) - (px * (mu*0.15 - alea*0.8)/100)).toFixed(2)}</span>
+                <span class="mono" style="background:var(--accent-blue-bg); color:var(--accent-blue); font-weight:700; padding:2px 8px; border-radius:4px;">Spread: $\\pm$₹${((px * (mu*1.6)/100) - (px * (mu*0.15 - alea*0.8)/100)).toFixed(2)}</span>
               </div>
             </div>
 
@@ -2768,7 +2804,7 @@ function setHorizon(days) {
             <div style="background:var(--bg-card); padding:12px; border-radius:8px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px;">
               <div style="font-weight:700; font-size:11.5px; color:var(--text-primary); display:flex; justify-content:space-between;">
                 <span>Chart 2: Conformal Reliability Calibration Curve</span>
-                <span style="font-size:10px; color:var(--accent-blue); font-weight:600;">ECE = 0.024</span>
+                <span style="font-size:10px; color:var(--accent-blue); font-weight:600;">$\\text{ECE} = 0.024$</span>
               </div>
               <div style="height:220px; width:100%; position:relative; overflow:hidden;">
                 <canvas id="math-chart-canvas" style="width:100%; height:100%; display:block;"></canvas>
@@ -2784,30 +2820,31 @@ function setHorizon(days) {
         box.innerHTML = `
           <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:18px;">
             <div style="background:var(--bg-surface); padding:16px; border-radius:8px; border:1px solid var(--border-subtle); display:flex; flex-direction:column; gap:10px;">
-              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">
-                Theorem 3: Kantorovich-Rubinstein Duality &amp; Wasserstein Robustness
+              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); display:flex; justify-content:space-between; align-items:center;">
+                <span>Theorem 3: Kantorovich-Rubinstein Duality &amp; Wasserstein Robustness</span>
+                <span style="font-size:10px; font-weight:700; background:var(--accent-amber-bg); color:var(--accent-amber); padding:2px 8px; border-radius:4px; border:1px solid rgba(217,119,6,0.2);">DRO Convexity</span>
               </div>
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                To protect against black-swan distributional shifts, our risk engine solves the minimax distributionally robust optimization problem over Wasserstein-1 ambiguity ball $\mathbb{B}_{\epsilon}(\hat{P}_N)$:
+              <div style="font-size:12.5px; color:var(--text-secondary); line-height:1.65;">
+                To protect against black-swan distributional shifts, our risk engine solves the minimax distributionally robust optimization problem over Wasserstein-1 ambiguity ball $\\mathbb{B}_{\\epsilon}(\\hat{P}_N)$:
               </div>
-              <div style="background:var(--bg-card); padding:10px 14px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:11.5px; border-left:3px solid var(--accent-amber); line-height:1.7;">
-                • Primal Problem: <b>min_{w ∈ Δ} max_{P: W₁(P, P̂) ≤ ε} E_P[Loss(w, ξ)]</b><br/>
-                • Dual Tractable Form: <b>min_{w ∈ Δ} { (1/N) ∑ Loss(w, ξ_i) + ε · ‖w‖_* }</b><br/>
-                • Calibrated Ambiguity Ball: <b>ε_f = 0.01939 (L1 Dual Norm)</b>
+              <div style="background:var(--bg-card); padding:12px 14px; border-radius:6px; font-size:12px; border-left:3px solid var(--accent-amber); line-height:1.85; color:var(--text-primary);">
+                • Primal Problem: <b>$\\min_{w \\in \\Delta} \\max_{P: W_1(P, \\hat{P}) \\le \\epsilon} \\mathbb{E}_P[\\text{Loss}(w, \\xi)]$</b><br/>
+                • Dual Tractable Form: <b>$\\min_{w \\in \\Delta} \\left\\{ \\frac{1}{N} \\sum_{i=1}^N \\text{Loss}(w, \\xi_i) + \\epsilon \\cdot \\|w\\|_* \\right\\}$</b><br/>
+                • Calibrated Ambiguity Ball: <b>$\\epsilon_f = 0.01939$ ($L_1$ Dual Norm)</b>
               </div>
-              <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.55;">
-                <b>Mathematical Proof:</b> By Kantorovich duality, worst-case distribution search collapses to an exact convex regularizer proportional to $\epsilon_f$. The resulting portfolio weight vector $w^*$ is mathematically immune to any perturbation bounded by $\epsilon_f$.
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.65;">
+                <b>Mathematical Proof:</b> By Kantorovich duality, worst-case distribution search collapses to an exact convex regularizer proportional to $\\epsilon_f$. The resulting portfolio weight vector $w^*$ is mathematically immune to any perturbation bounded by $\\epsilon_f$.
               </div>
               <div style="display:flex; gap:10px; font-size:11px; margin-top:2px;">
-                <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Robust CVaR(95%): -4.2%</span>
-                <span class="mono" style="background:var(--accent-amber-bg); color:var(--accent-amber); font-weight:700; padding:2px 8px; border-radius:4px;">Ambiguity ε: 0.01939</span>
+                <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Robust $\\text{CVaR}(95\\%)$: -4.2%</span>
+                <span class="mono" style="background:var(--accent-amber-bg); color:var(--accent-amber); font-weight:700; padding:2px 8px; border-radius:4px;">Ambiguity $\\epsilon$: 0.01939</span>
               </div>
             </div>
 
             <!-- MATHEMATICAL CHART 3 -->
             <div style="background:var(--bg-card); padding:12px; border-radius:8px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px;">
               <div style="font-weight:700; font-size:11.5px; color:var(--text-primary); display:flex; justify-content:space-between;">
-                <span>Chart 3: Wasserstein Radius ε vs. Worst-Case Loss</span>
+                <span>Chart 3: Wasserstein Radius $\\epsilon$ vs. Worst-Case Loss</span>
                 <span style="font-size:10px; color:var(--accent-amber); font-weight:600;">Duality Frontier</span>
               </div>
               <div style="height:220px; width:100%; position:relative; overflow:hidden;">
@@ -2824,19 +2861,20 @@ function setHorizon(days) {
         box.innerHTML = `
           <div style="display:grid; grid-template-columns:1.35fr 1fr; gap:18px;">
             <div style="background:var(--bg-surface); padding:16px; border-radius:8px; border:1px solid var(--border-subtle); display:flex; flex-direction:column; gap:10px;">
-              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary);">
-                Theorem 4: Half-Kelly Compounding Optimality &amp; Ruin Variance Suppression
+              <div style="font-weight:700; font-size:13.5px; color:var(--text-primary); display:flex; justify-content:space-between; align-items:center;">
+                <span>Theorem 4: Half-Kelly Compounding Optimality &amp; Ruin Variance Suppression</span>
+                <span style="font-size:10px; font-weight:700; background:var(--accent-green-bg); color:var(--accent-green); padding:2px 8px; border-radius:4px; border:1px solid rgba(21,130,83,0.2);">Asymptotic Growth</span>
               </div>
-              <div style="font-size:12px; color:var(--text-secondary); line-height:1.6;">
-                The continuous-time geometric compounding rate $G(f) = \mu f - \frac{1}{2}\sigma^2 f^2$ reaches a theoretical maximum at Full Kelly $f^* = \mu / \sigma^2$. However, Full Kelly entails an unacceptably high drawdown probability ($P(\text{Drawdown} > 50\%) = 33\%$).
+              <div style="font-size:12.5px; color:var(--text-secondary); line-height:1.65;">
+                The continuous-time geometric compounding rate $G(f) = \\mu f - \\frac{1}{2}\\sigma^2 f^2$ reaches a theoretical maximum at Full Kelly $f^* = \\frac{\\mu}{\\sigma^2}$. However, Full Kelly entails an unacceptably high drawdown probability ($\\mathbb{P}(\\text{Drawdown} > 50\\%) = 33\\%$).
               </div>
-              <div style="background:var(--bg-card); padding:10px 14px; border-radius:6px; font-family:'JetBrains Mono',monospace; font-size:11.5px; border-left:3px solid var(--accent-green); line-height:1.7;">
-                • Half-Kelly Allocation Fraction: <b>f = 0.5 · f* = 9.6% (Allocated: ₹${((100000)*0.096).toFixed(2)})</b><br/>
-                • Expected Compounding Speed: <b>G(0.5 f*) = 0.75 · G(f*) (75% of Maximum)</b><br/>
-                • Wealth Trajectory Variance: <b>Var[W] = 0.25 · Var_Full (75% Variance Reduction)</b>
+              <div style="background:var(--bg-card); padding:12px 14px; border-radius:6px; font-size:12px; border-left:3px solid var(--accent-green); line-height:1.85; color:var(--text-primary);">
+                • Half-Kelly Allocation Fraction: <b>$f = 0.5 \\cdot f^* = 9.6\\%$ (Allocated: ₹${((100000)*0.096).toFixed(2)})</b><br/>
+                • Expected Compounding Speed: <b>$G(0.5 f^*) = 0.75 \\cdot G(f^*)$ (75% of Maximum)</b><br/>
+                • Wealth Trajectory Variance: <b>$\\text{Var}[W_T]_{0.5 f^*} = 0.25 \\cdot \\text{Var}[W_T]_{f^*}$ (75% Variance Reduction)</b>
               </div>
-              <div style="font-size:11.5px; color:var(--text-secondary); line-height:1.55;">
-                <b>Mathematical Proof:</b> Solving $\frac{\partial G}{\partial f} = 0$ yields the vertex at $f^*$. Evaluating at $f = 0.5 f^*$ proves mathematically that the fund captures 3/4 of the theoretical compounding speed while shrinking portfolio ruin probability by over 80%.
+              <div style="font-size:12px; color:var(--text-secondary); line-height:1.65;">
+                <b>Mathematical Proof:</b> Solving $\\frac{\\partial G}{\\partial f} = 0$ yields the vertex at $f^*$. Evaluating at $f = 0.5 f^*$ proves mathematically that the fund captures $\\frac{3}{4}$ of the theoretical compounding speed while shrinking portfolio ruin probability by over 80%.
               </div>
               <div style="display:flex; gap:10px; font-size:11px; margin-top:2px;">
                 <span class="mono" style="background:var(--accent-green-bg); color:var(--accent-green); font-weight:700; padding:2px 8px; border-radius:4px;">Optimal Shares: ${Math.floor(9600/px)}</span>
@@ -2848,18 +2886,21 @@ function setHorizon(days) {
             <div style="background:var(--bg-card); padding:12px; border-radius:8px; border:1px solid var(--border-color); display:flex; flex-direction:column; gap:6px;">
               <div style="font-weight:700; font-size:11.5px; color:var(--text-primary); display:flex; justify-content:space-between;">
                 <span>Chart 4: Kelly Fraction vs. Growth &amp; Ruin Probability</span>
-                <span style="font-size:10px; color:var(--accent-green); font-weight:600;">Sweet Spot 0.5f*</span>
+                <span style="font-size:10px; color:var(--accent-green); font-weight:600;">Sweet Spot $0.5f^*$</span>
               </div>
               <div style="height:220px; width:100%; position:relative; overflow:hidden;">
                 <canvas id="math-chart-canvas" style="width:100%; height:100%; display:block;"></canvas>
               </div>
               <div style="font-size:10px; color:var(--text-muted); text-align:center;">
-                Green = Geometric Growth Rate G(f) · Red = Probability of &gt;20% Drawdown
+                Green = Geometric Growth Rate $G(f)$ · Red = Probability of &gt;20% Drawdown
               </div>
             </div>
           </div>
         `;
       }
+
+      // Render math formulas with KaTeX
+      renderAllMathIn(box);
 
       // Draw the respective mathematical canvas
       setTimeout(() => {
