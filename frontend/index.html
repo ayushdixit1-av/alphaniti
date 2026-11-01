@@ -1451,14 +1451,12 @@
             <div class="stock-hero-change" id="hero-change">+20.40 (+2.83%)</div>
           </div>
 
-          <div class="stock-hero-right" style="display:flex; flex-direction:column; align-items:flex-end; gap:6px;">
-            <!-- INTRADAY PAPER TRADING PORTAL PILL LINK -->
-            <a href="javascript:void(0)" onclick="openPaperTradingPortal()" style="display:inline-flex; align-items:center; gap:6px; font-size:11px; font-weight:700; color:var(--accent-green); background:var(--accent-green-bg); padding:3px 10px; border-radius:20px; border:1px solid rgba(21,130,83,0.25); text-decoration:none; cursor:pointer; transition:all 0.15s ease;" onmouseover="this.style.background='var(--accent-green)'; this.style.color='#FFF';" onmouseout="this.style.background='var(--accent-green-bg)'; this.style.color='var(--accent-green)';">
-              <span style="font-size:12px;">⚡</span>
-              <span>Intraday Paper Trading Portal (₹50k Live Simulator)</span>
-              <span style="font-size:10px;">➔</span>
+          <div class="stock-hero-right" style="position:relative; display:flex; align-items:center; gap:10px;">
+            <!-- INTRADAY PAPER TRADING PORTAL PILL LINK (Directly above Watchlist & Trade Idea) -->
+            <a href="javascript:void(0)" onclick="openPaperTradingPortal()" style="position:absolute; bottom:calc(100% + 5px); right:0; white-space:nowrap; display:inline-flex; align-items:center; gap:6px; font-size:10.5px; font-weight:700; color:#158253; background:rgba(21,130,83,0.09); border:1px solid rgba(21,130,83,0.3); padding:2.5px 10px; border-radius:12px; text-decoration:none; cursor:pointer; transition:all 0.15s ease;" onmouseover="this.style.background='rgba(21,130,83,0.18)'; this.style.borderColor='#158253';" onmouseout="this.style.background='rgba(21,130,83,0.09)'; this.style.borderColor='rgba(21,130,83,0.3)';">
+              <span style="display:inline-block; width:6px; height:6px; border-radius:50%; background:#158253;"></span>
+              <span>⚡ Intraday Paper Trading Portal (Live Sandbox) ➔</span>
             </a>
-            <div style="display:flex; align-items:center; gap:8px;">
             <button class="btn-outline" onclick="toggleWatchlistBtn(this)">
               <span>☆</span>
               <span>Watchlist</span>
@@ -1469,8 +1467,6 @@
             </button>
           </div>
         </div>
-
-          </div>
 
         <!-- B. SUBNAV TABS -->
         <div class="subnav-tabs">
@@ -7055,8 +7051,6 @@ function setHorizon(days) {
 
     function updatePaperEstimates(qty, px) {
       // Re-renders dynamic preview if needed
-    }
-      }
     }
 
 </script>
