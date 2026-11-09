@@ -3,3 +3,6 @@ __pycache__/
 .ipynb_checkpoints/
 kaggle_out/
 sample_data/
+
+deploy_alphaniti_vercel.py
+live_strategy_daemon.py
