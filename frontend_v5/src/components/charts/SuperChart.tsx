@@ -1,6 +1,7 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import {
   createChart,
+  CrosshairMode,
   IChartApi,
   ISeriesApi,
   CandlestickData,
@@ -11,8 +12,38 @@ import {
   Time,
   IPriceLine,
 } from 'lightweight-charts';
-import { Camera, Maximize2, Crosshair, SlidersHorizontal, Layers } from 'lucide-react';
+import {
+  Camera,
+  Maximize2,
+  Crosshair,
+  SlidersHorizontal,
+  ZoomIn,
+  ZoomOut,
+  Magnet,
+  Play,
+  Pause,
+  SkipBack,
+  SkipForward,
+  RotateCcw,
+} from 'lucide-react';
 import { AuditTrade, CandleBar, CockpitSymbolData } from '../../types/api';
+import {
+  computeVolumeProfile,
+  findNearestBarIndex,
+  NormalizedBar,
+  normalizeAndComputeIndicators,
+} from '../../utils/chartMath';
+
+export interface ActiveBracketOverlay {
+  direction: 'LONG' | 'SHORT';
+  entryLow: number;
+  entryHigh: number;
+  entryMid: number;
+  stopLoss: number;
+  profitFloor?: number | null;
+  target1: number;
+  target2?: number | null;
+}
 
 interface SuperChartProps {
   symbol: string;
@@ -23,6 +54,9 @@ interface SuperChartProps {
   isLiveToday?: boolean;
   cockpit: CockpitSymbolData | null;
   trades: AuditTrade[];
+  externalReplayIndex?: number | null;
+  onExternalReplayIndexChange?: (idx: number | null) => void;
+  overrideBracket?: ActiveBracketOverlay | null;
 }
 
 export const SuperChart: React.FC<SuperChartProps> = ({
@@ -34,6 +68,9 @@ export const SuperChart: React.FC<SuperChartProps> = ({
   isLiveToday,
   cockpit,
   trades,
+  externalReplayIndex,
+  onExternalReplayIndexChange,
+  overrideBracket,
 }) => {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const overlayCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -42,11 +79,34 @@ export const SuperChart: React.FC<SuperChartProps> = ({
   const volSeriesRef = useRef<ISeriesApi<'Histogram'> | null>(null);
   const emaSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const vwapUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const vwapLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
+  const barMapRef = useRef<Map<number, NormalizedBar>>(new Map());
+  const prevSymbolRef = useRef<string>(symbol);
 
   const [showIndicators, setShowIndicators] = useState(true);
   const [showVP, setShowVP] = useState(true);
   const [showDB, setShowDB] = useState(true);
+  const [showHL, setShowHL] = useState(true);
+  const [showLevels, setShowLevels] = useState(true);
+  const [magnetMode, setMagnetMode] = useState(false);
+
+  // Built-in Replay state (used when externalReplayIndex is not explicitly provided)
+  const isControlledReplay = externalReplayIndex !== undefined;
+  const [internalReplayIdx, setInternalReplayIdx] = useState<number | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [playSpeedMs, setPlaySpeedMs] = useState<number>(450);
+
+  const effectiveReplayIdx = isControlledReplay ? externalReplayIndex ?? null : internalReplayIdx;
+  const setEffectiveReplayIdx = (next: number | null) => {
+    if (isControlledReplay && onExternalReplayIndexChange) {
+      onExternalReplayIndexChange(next);
+    } else {
+      setInternalReplayIdx(next);
+    }
+  };
+
   const [crosshairBar, setCrosshairBar] = useState<{
     time: string;
     open: number;
@@ -54,9 +114,88 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     low: number;
     close: number;
     vol: number;
+    vwap: number;
+    pct: number;
   } | null>(null);
 
-  // Initialize chart instance once
+  const allNormalized = useMemo(() => normalizeAndComputeIndicators(candles), [candles]);
+
+  // Reset internal replay cleanly when symbol or timeframe changes
+  useEffect(() => {
+    setIsPlaying(false);
+    if (!isControlledReplay) {
+      setInternalReplayIdx(null);
+    }
+  }, [symbol, timeframe, isControlledReplay]);
+
+  // Causal slice for Synchronized Replay
+  const visibleBars = useMemo(() => {
+    if (effectiveReplayIdx === null || effectiveReplayIdx < 0 || allNormalized.length === 0) {
+      return allNormalized;
+    }
+    const clamped = Math.min(allNormalized.length - 1, Math.max(0, effectiveReplayIdx));
+    return allNormalized.slice(0, clamped + 1);
+  }, [allNormalized, effectiveReplayIdx]);
+
+  // Playback timer
+  useEffect(() => {
+    if (!isPlaying || allNormalized.length === 0) return;
+    const id = setInterval(() => {
+      const cur = effectiveReplayIdx ?? 0;
+      if (cur >= allNormalized.length - 1) {
+        setIsPlaying(false);
+        return;
+      }
+      setEffectiveReplayIdx(cur + 1);
+    }, playSpeedMs);
+    return () => clearInterval(id);
+  }, [isPlaying, playSpeedMs, effectiveReplayIdx, allNormalized.length]);
+
+  // Compute causal Session High/Low & Volume Profile across visibleBars
+  const sessionStats = useMemo(() => {
+    if (visibleBars.length === 0) {
+      return { high: 0, low: 0, lastClose: 0, lastVwap: 0, vp: null };
+    }
+    let sHigh = -Infinity;
+    let sLow = Infinity;
+    for (const b of visibleBars) {
+      if (b.high > sHigh) sHigh = b.high;
+      if (b.low < sLow) sLow = b.low;
+    }
+    const last = visibleBars[visibleBars.length - 1];
+    const vp = computeVolumeProfile(visibleBars, 32);
+    return {
+      high: sHigh,
+      low: sLow,
+      lastClose: last.close,
+      lastVwap: last.vwap,
+      vp,
+    };
+  }, [visibleBars]);
+
+  // Resolve bracket levels (from Replay override or Cockpit Execution Brief)
+  const resolvedBracket: ActiveBracketOverlay | null = useMemo(() => {
+    if (overrideBracket) return overrideBracket;
+    const eb = cockpit?.execution_brief;
+    if (!eb) return null;
+    const parts = eb.entry_zone.replace(/,/g, '').split('-').map((s) => parseFloat(s.trim()));
+    const eLow = Number.isFinite(parts[0]) ? parts[0] : cockpit?.ltp || 0;
+    const eHigh = Number.isFinite(parts[1]) ? parts[1] : eLow;
+    const eMid = (eLow + eHigh) / 2;
+    const isShort = eb.stop_loss > eMid;
+    return {
+      direction: isShort ? 'SHORT' : 'LONG',
+      entryLow: eLow,
+      entryHigh: eHigh,
+      entryMid: eMid,
+      stopLoss: eb.stop_loss,
+      profitFloor: null,
+      target1: eb.target_1,
+      target2: eb.target_2,
+    };
+  }, [overrideBracket, cockpit]);
+
+  // Initialize TradingView Lightweight Chart once
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
@@ -73,57 +212,90 @@ export const SuperChart: React.FC<SuperChartProps> = ({
         horzLines: { color: 'rgba(148, 163, 184, 0.06)' },
       },
       crosshair: {
-        mode: 0,
-        vertLine: { color: 'rgba(56, 189, 248, 0.4)', width: 1, style: 2 },
-        horzLine: { color: 'rgba(56, 189, 248, 0.4)', width: 1, style: 2 },
+        mode: CrosshairMode.Normal,
+        vertLine: {
+          color: 'rgba(56, 189, 248, 0.55)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#0f172a',
+        },
+        horzLine: {
+          color: 'rgba(56, 189, 248, 0.55)',
+          width: 1,
+          style: 2,
+          labelBackgroundColor: '#0f172a',
+        },
+      },
+      handleScroll: {
+        mouseWheel: true,
+        pressedMouseMove: true,
+        horzTouchDrag: true,
+        vertTouchDrag: true,
+      },
+      handleScale: {
+        axisPressedMouseMove: { time: true, price: true },
+        axisDoubleClickReset: { time: true, price: true },
+        mouseWheel: true,
+        pinch: true,
       },
       rightPriceScale: {
-        borderColor: 'rgba(148, 163, 184, 0.14)',
-        scaleMargins: { top: 0.08, bottom: 0.22 },
+        borderColor: 'rgba(148, 163, 184, 0.16)',
+        scaleMargins: { top: 0.1, bottom: 0.2 },
       },
       timeScale: {
-        borderColor: 'rgba(148, 163, 184, 0.14)',
+        borderColor: 'rgba(148, 163, 184, 0.16)',
         timeVisible: true,
         secondsVisible: false,
-        rightOffset: 8,
-      },
-      localization: {
-        timeFormatter: (t: number) => {
-          const d = new Date((t + 19800) * 1000);
-          return timeframe === 'D'
-            ? d.toISOString().slice(0, 10)
-            : d.toISOString().slice(11, 16);
-        },
+        rightOffset: 10,
+        barSpacing: 7,
+        minBarSpacing: 2,
       },
     });
 
     const candleSeries = chart.addCandlestickSeries({
       upColor: '#10b981',
       downColor: '#f43f5e',
-      borderVisible: false,
-      wickUpColor: '#10b981',
-      wickDownColor: '#f43f5e',
+      borderVisible: true,
+      borderUpColor: '#10b981',
+      borderDownColor: '#f43f5e',
+      wickUpColor: '#34d399',
+      wickDownColor: '#fb7185',
     });
 
     const volSeries = chart.addHistogramSeries({
-      color: 'rgba(56, 189, 248, 0.25)',
       priceFormat: { type: 'volume' },
       priceScaleId: '',
     });
-    chart.priceScale('').applyOptions({
-      scaleMargins: { top: 0.8, bottom: 0 },
-    });
+    chart.priceScale('').applyOptions({ scaleMargins: { top: 0.82, bottom: 0 } });
 
     const emaSeries = chart.addLineSeries({
       color: '#22d3ee',
       lineWidth: 2,
       priceLineVisible: false,
       lastValueVisible: false,
+      title: 'EMA9',
     });
 
     const vwapSeries = chart.addLineSeries({
       color: '#e879f9',
       lineWidth: 2,
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: 'VWAP',
+    });
+
+    const vwapUpper = chart.addLineSeries({
+      color: 'rgba(192, 132, 252, 0.4)',
+      lineWidth: 1,
+      lineStyle: 2,
+      priceLineVisible: false,
+      lastValueVisible: false,
+    });
+
+    const vwapLower = chart.addLineSeries({
+      color: 'rgba(192, 132, 252, 0.4)',
+      lineWidth: 1,
+      lineStyle: 2,
       priceLineVisible: false,
       lastValueVisible: false,
     });
@@ -133,6 +305,34 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     volSeriesRef.current = volSeries;
     emaSeriesRef.current = emaSeries;
     vwapSeriesRef.current = vwapSeries;
+    vwapUpperRef.current = vwapUpper;
+    vwapLowerRef.current = vwapLower;
+
+    // Single Crosshair subscription (no stacked listeners)
+    const onCrosshair = (param: any) => {
+      if (!param.time) {
+        setCrosshairBar(null);
+        return;
+      }
+      const b = barMapRef.current.get(Number(param.time));
+      if (!b) {
+        setCrosshairBar(null);
+        return;
+      }
+      const ist = new Date((b.ts + 19800) * 1000);
+      const pct = b.open > 0 ? ((b.close - b.open) / b.open) * 100 : 0;
+      setCrosshairBar({
+        time: ist.toISOString().slice(11, 16),
+        open: b.open,
+        high: b.high,
+        low: b.low,
+        close: b.close,
+        vol: b.volume || 0,
+        vwap: b.vwap,
+        pct,
+      });
+    };
+    chart.subscribeCrosshairMove(onCrosshair);
 
     const ro = new ResizeObserver(() => {
       if (containerRef.current && chartRef.current) {
@@ -145,125 +345,102 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     ro.observe(el);
 
     return () => {
+      chart.unsubscribeCrosshairMove(onCrosshair);
       ro.disconnect();
       chart.remove();
       chartRef.current = null;
     };
   }, []);
 
-  // Update Time formatter when timeframe switches
+  // Update Magnet mode & timeFormatter cleanly
   useEffect(() => {
     if (!chartRef.current) return;
     chartRef.current.applyOptions({
+      crosshair: {
+        mode: magnetMode ? CrosshairMode.Magnet : CrosshairMode.Normal,
+      },
       localization: {
         timeFormatter: (t: number) => {
           const d = new Date((t + 19800) * 1000);
-          return timeframe === 'D'
-            ? d.toISOString().slice(0, 10)
-            : d.toISOString().slice(11, 16);
+          return timeframe === 'D' ? d.toISOString().slice(0, 10) : d.toISOString().slice(11, 16);
         },
       },
     });
-  }, [timeframe]);
+  }, [magnetMode, timeframe]);
 
-  // Populate series + markers + price lines whenever candles / cockpit change
+  // Populate series, markers & distinguishable price lines
   useEffect(() => {
     const cs = candleSeriesRef.current;
     const vs = volSeriesRef.current;
     const es = emaSeriesRef.current;
     const vws = vwapSeriesRef.current;
+    const vwu = vwapUpperRef.current;
+    const vwl = vwapLowerRef.current;
     const chart = chartRef.current;
-    if (!cs || !vs || !es || !vws || !chart) return;
+    if (!cs || !vs || !es || !vws || !vwu || !vwl || !chart) return;
 
-    // Normalize candle timestamps strictly increasing UTC seconds
-    const seen = new Set<number>();
+    const map = new Map<number, NormalizedBar>();
     const formatted: CandlestickData<Time>[] = [];
     const volData: HistogramData<Time>[] = [];
     const emaData: LineData<Time>[] = [];
     const vwapData: LineData<Time>[] = [];
+    const upperData: LineData<Time>[] = [];
+    const lowerData: LineData<Time>[] = [];
 
-    let emaPrev: number | null = null;
-    const k = 2 / (9 + 1);
-    let cumTPV = 0;
-    let cumVol = 0;
-
-    const sortedCandles = [...candles]
-      .map((c, idx) => {
-        const ts =
-          typeof c.timestamp === 'number'
-            ? c.timestamp
-            : typeof c.time === 'number'
-            ? c.time
-            : Math.floor(Date.now() / 1000) - (candles.length - idx) * 300;
-        return { ...c, _ts: ts };
-      })
-      .sort((a, b) => a._ts - b._ts);
-
-    for (const c of sortedCandles) {
-      if (seen.has(c._ts) || c.close <= 0) continue;
-      seen.add(c._ts);
-      const t = c._ts as UTCTimestamp;
-      formatted.push({ time: t, open: c.open, high: c.high, low: c.low, close: c.close });
-      const isUp = c.close >= c.open;
+    for (const bar of visibleBars) {
+      map.set(bar.ts, bar);
+      const t = bar.ts as UTCTimestamp;
+      formatted.push({ time: t, open: bar.open, high: bar.high, low: bar.low, close: bar.close });
+      const isUp = bar.close >= bar.open;
       volData.push({
         time: t,
-        value: c.volume || 0,
-        color: isUp ? 'rgba(16, 185, 129, 0.32)' : 'rgba(244, 63, 94, 0.32)',
+        value: bar.volume || 0,
+        color: isUp ? 'rgba(16, 185, 129, 0.35)' : 'rgba(244, 63, 94, 0.35)',
       });
-      emaPrev = emaPrev === null ? c.close : c.close * k + emaPrev * (1 - k);
-      emaData.push({ time: t, value: Number(emaPrev.toFixed(2)) });
-
-      const tp = (c.high + c.low + c.close) / 3;
-      const v = Math.max(1, c.volume || 1);
-      cumTPV += tp * v;
-      cumVol += v;
-      vwapData.push({ time: t, value: Number((cumTPV / cumVol).toFixed(2)) });
+      emaData.push({ time: t, value: bar.ema9 });
+      vwapData.push({ time: t, value: bar.vwap });
+      upperData.push({ time: t, value: bar.vwapUpper });
+      lowerData.push({ time: t, value: bar.vwapLower });
     }
+    barMapRef.current = map;
 
     cs.setData(formatted);
     vs.setData(volData);
     es.setData(showIndicators ? emaData : []);
     vws.setData(showIndicators ? vwapData : []);
+    vwu.setData(showIndicators ? upperData : []);
+    vwl.setData(showIndicators ? lowerData : []);
 
-    // Execution Trade Markers (B / S) for selected symbol
+    // Causal Execution Markers (only show exit marker once replay reaches exit bar)
     const markers: SeriesMarker<Time>[] = [];
     const symTrades = trades.filter((t) => t.symbol.toUpperCase() === symbol.toUpperCase());
-    if (symTrades.length > 0 && sortedCandles.length > 0) {
-      const findNearestTs = (hhmm: string): number => {
-        let bestTs = sortedCandles[0]._ts;
-        let bestDiff = Infinity;
-        const [hh, mm] = hhmm.split(':').map((n) => parseInt(n, 10) || 0);
-        const targetMins = hh * 60 + mm;
-        for (const bar of sortedCandles) {
-          const ist = new Date((bar._ts + 19800) * 1000);
-          const barMins = ist.getUTCHours() * 60 + ist.getUTCMinutes();
-          const diff = Math.abs(barMins - targetMins);
-          if (diff < bestDiff) {
-            bestDiff = diff;
-            bestTs = bar._ts;
-          }
-        }
-        return bestTs;
-      };
-
+    if (symTrades.length > 0 && visibleBars.length > 0) {
+      const lastVisibleTs = visibleBars[visibleBars.length - 1].ts;
       for (const tr of symTrades) {
         const isShort = tr.strategy.includes('SHORT');
-        const entryTs = findNearestTs(tr.entry_time) as UTCTimestamp;
-        const exitTs = findNearestTs(tr.exit_time) as UTCTimestamp;
-        markers.push({
-          time: entryTs,
-          position: isShort ? 'aboveBar' : 'belowBar',
-          color: isShort ? '#f43f5e' : '#10b981',
-          shape: isShort ? 'arrowDown' : 'arrowUp',
-          text: isShort ? 'S' : 'B',
-        });
-        markers.push({
-          time: exitTs,
-          position: isShort ? 'belowBar' : 'aboveBar',
-          color: '#38bdf8',
-          shape: isShort ? 'arrowUp' : 'arrowDown',
-          text: `${tr.net_pnl >= 0 ? '+' : ''}₹${tr.net_pnl.toFixed(0)}`,
-        });
+        const entryIdx = findNearestBarIndex(allNormalized, tr.entry_time);
+        const exitIdx = findNearestBarIndex(allNormalized, tr.exit_time);
+        const entryBar = allNormalized[entryIdx];
+        const exitBar = allNormalized[exitIdx];
+
+        if (entryBar && entryBar.ts <= lastVisibleTs) {
+          markers.push({
+            time: entryBar.ts as UTCTimestamp,
+            position: isShort ? 'aboveBar' : 'belowBar',
+            color: isShort ? '#f43f5e' : '#10b981',
+            shape: isShort ? 'arrowDown' : 'arrowUp',
+            text: `${isShort ? 'SHORT' : 'BUY'} ₹${tr.entry_price.toFixed(1)}`,
+          });
+        }
+        if (exitBar && exitBar.ts <= lastVisibleTs) {
+          markers.push({
+            time: exitBar.ts as UTCTimestamp,
+            position: isShort ? 'belowBar' : 'aboveBar',
+            color: '#38bdf8',
+            shape: isShort ? 'arrowUp' : 'arrowDown',
+            text: `EXIT ${tr.net_pnl >= 0 ? '+' : ''}₹${tr.net_pnl.toFixed(1)}`,
+          });
+        }
       }
       markers.sort((a, b) => (a.time as number) - (b.time as number));
     }
@@ -279,84 +456,134 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     }
     priceLinesRef.current = [];
 
-    // Add VAH, POC, VAL and Risk Bracket lines
-    if (showVP && cockpit?.volume_profile?.success) {
-      const vp = cockpit.volume_profile;
+    // 1. Session High & Session Low
+    if (showHL && sessionStats.high > 0 && sessionStats.low < Infinity) {
       priceLinesRef.current.push(
         cs.createPriceLine({
-          price: vp.vah_price,
-          color: '#94a3b8',
+          price: sessionStats.high,
+          color: 'rgba(45, 212, 191, 0.75)',
           lineWidth: 1,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: `VAH ${vp.vah_price.toFixed(2)}`,
+          title: 'S-HIGH',
         }),
         cs.createPriceLine({
-          price: vp.poc_price,
+          price: sessionStats.low,
+          color: 'rgba(251, 113, 133, 0.75)',
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'S-LOW',
+        })
+      );
+    }
+
+    // 2. Volume Profile Key Levels (VAH / POC / VAL)
+    if (showVP && sessionStats.vp) {
+      const vp = sessionStats.vp;
+      priceLinesRef.current.push(
+        cs.createPriceLine({
+          price: vp.vahPrice,
+          color: 'rgba(148, 163, 184, 0.65)',
+          lineWidth: 1,
+          lineStyle: 3,
+          axisLabelVisible: true,
+          title: 'VAH',
+        }),
+        cs.createPriceLine({
+          price: vp.pocPrice,
           color: '#f59e0b',
-          lineWidth: 1,
+          lineWidth: 2,
           lineStyle: 2,
           axisLabelVisible: true,
-          title: `POC ${vp.poc_price.toFixed(2)}`,
+          title: 'POC',
         }),
         cs.createPriceLine({
-          price: vp.val_price,
-          color: '#94a3b8',
+          price: vp.valPrice,
+          color: 'rgba(148, 163, 184, 0.65)',
           lineWidth: 1,
-          lineStyle: 2,
+          lineStyle: 3,
           axisLabelVisible: true,
-          title: `VAL ${vp.val_price.toFixed(2)}`,
+          title: 'VAL',
         })
       );
     }
 
-    if (cockpit?.execution_brief) {
-      const eb = cockpit.execution_brief;
+    // 3. Visually Distinguishable Entry, Stop Loss, Profit Floor & Targets
+    if (showLevels && resolvedBracket) {
       priceLinesRef.current.push(
         cs.createPriceLine({
-          price: eb.target_1,
-          color: '#10b981',
-          lineWidth: 1,
-          lineStyle: 3,
-          axisLabelVisible: false,
-          title: 'T1',
+          price: resolvedBracket.entryMid,
+          color: '#38bdf8',
+          lineWidth: 2,
+          lineStyle: 0,
+          axisLabelVisible: true,
+          title: 'ENTRY',
         }),
         cs.createPriceLine({
-          price: eb.stop_loss,
+          price: resolvedBracket.stopLoss,
           color: '#f43f5e',
-          lineWidth: 1,
-          lineStyle: 3,
-          axisLabelVisible: false,
-          title: 'SL',
+          lineWidth: 2,
+          lineStyle: 0,
+          axisLabelVisible: true,
+          title: 'SL -1.0R',
+        }),
+        cs.createPriceLine({
+          price: resolvedBracket.target1,
+          color: '#10b981',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: 'T1 +1.0R',
         })
       );
+
+      if (resolvedBracket.target2) {
+        priceLinesRef.current.push(
+          cs.createPriceLine({
+            price: resolvedBracket.target2,
+            color: '#34d399',
+            lineWidth: 1,
+            lineStyle: 1,
+            axisLabelVisible: true,
+            title: 'T2 +1.8R',
+          })
+        );
+      }
+
+      if (resolvedBracket.profitFloor) {
+        priceLinesRef.current.push(
+          cs.createPriceLine({
+            price: resolvedBracket.profitFloor,
+            color: '#f59e0b',
+            lineWidth: 2,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: 'FLOOR',
+          })
+        );
+      }
     }
 
-    chart.timeScale().fitContent();
+    if (prevSymbolRef.current !== symbol || effectiveReplayIdx === null) {
+      chart.timeScale().fitContent();
+      prevSymbolRef.current = symbol;
+    }
+  }, [
+    visibleBars,
+    allNormalized,
+    symbol,
+    showIndicators,
+    showVP,
+    showHL,
+    showLevels,
+    sessionStats,
+    resolvedBracket,
+    trades,
+    effectiveReplayIdx,
+  ]);
 
-    // Crosshair listener for OHLCV HUD
-    chart.subscribeCrosshairMove((param) => {
-      if (!param.time || !param.seriesData) {
-        setCrosshairBar(null);
-        return;
-      }
-      const d = param.seriesData.get(cs) as CandlestickData<Time> | undefined;
-      const v = param.seriesData.get(vs) as HistogramData<Time> | undefined;
-      if (d) {
-        const ist = new Date(((param.time as number) + 19800) * 1000);
-        setCrosshairBar({
-          time: timeframe === 'D' ? ist.toISOString().slice(0, 10) : ist.toISOString().slice(11, 16),
-          open: d.open,
-          high: d.high,
-          low: d.low,
-          close: d.close,
-          vol: v?.value ?? 0,
-        });
-      }
-    });
-  }, [candles, symbol, showIndicators, showVP, cockpit, trades, timeframe]);
-
-  // Draw right-edge Volume Profile Histogram & Dalton Base synced to PriceScale coordinates
+  // High-FPS Synced Overlay Canvas: Volume Profile Histogram + VA Bracket + Risk/Reward Zones + Dalton Base
   useEffect(() => {
     let rafId = 0;
     const drawOverlay = () => {
@@ -378,23 +605,54 @@ export const SuperChart: React.FC<SuperChartProps> = ({
       ctx.save();
       ctx.scale(dpr, dpr);
       ctx.clearRect(0, 0, w, h);
+      const plotRight = w - 68;
 
-      // 1. Dalton Base Box
+      // 1. Shaded Entry / Risk / Reward Zones
+      if (showLevels && resolvedBracket) {
+        const yEntry = cs.priceToCoordinate(resolvedBracket.entryMid);
+        const yELow = cs.priceToCoordinate(resolvedBracket.entryLow);
+        const yEHigh = cs.priceToCoordinate(resolvedBracket.entryHigh);
+        const ySL = cs.priceToCoordinate(resolvedBracket.stopLoss);
+        const yT1 = cs.priceToCoordinate(resolvedBracket.target1);
+
+        if (yEntry !== null && ySL !== null) {
+          const topR = Math.min(yEntry, ySL);
+          const heightR = Math.abs(ySL - yEntry);
+          ctx.fillStyle = 'rgba(244, 63, 94, 0.065)';
+          ctx.fillRect(0, topR, plotRight, heightR);
+        }
+
+        if (yEntry !== null && yT1 !== null) {
+          const topG = Math.min(yEntry, yT1);
+          const heightG = Math.abs(yT1 - yEntry);
+          ctx.fillStyle = 'rgba(16, 185, 129, 0.055)';
+          ctx.fillRect(0, topG, plotRight, heightG);
+        }
+
+        if (yELow !== null && yEHigh !== null) {
+          const topE = Math.min(yELow, yEHigh);
+          const heightE = Math.max(4, Math.abs(yEHigh - yELow));
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.14)';
+          ctx.fillRect(0, topE, plotRight, heightE);
+        }
+      }
+
+      // 2. Dalton Base Zone (DB)
       if (showDB && cockpit?.dalton_base) {
         const yHigh = cs.priceToCoordinate(cockpit.dalton_base.base_high);
         const yLow = cs.priceToCoordinate(cockpit.dalton_base.base_low);
         if (yHigh !== null && yLow !== null) {
           const top = Math.min(yHigh, yLow);
           const boxH = Math.max(4, Math.abs(yLow - yHigh));
-          const left = w * 0.25;
-          const boxW = w * 0.45;
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.04)';
+          const left = w * 0.24;
+          const boxW = w * 0.44;
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.045)';
           ctx.fillRect(left, top, boxW, boxH);
-          ctx.strokeStyle = 'rgba(56, 189, 248, 0.25)';
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.3)';
           ctx.setLineDash([4, 4]);
           ctx.strokeRect(left, top, boxW, boxH);
           ctx.setLineDash([]);
-          ctx.fillStyle = 'rgba(56, 189, 248, 0.7)';
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.85)';
           ctx.font = "600 9.5px 'JetBrains Mono'";
           ctx.fillText(
             `DALTON BASE ${cockpit.dalton_base.base_low.toFixed(1)}–${cockpit.dalton_base.base_high.toFixed(1)}`,
@@ -404,25 +662,58 @@ export const SuperChart: React.FC<SuperChartProps> = ({
         }
       }
 
-      // 2. Right-Edge Volume Profile Histogram
-      if (showVP && cockpit?.volume_profile?.profile?.length) {
-        const nodes = cockpit.volume_profile.profile;
-        const maxVol = Math.max(...nodes.map((n) => n.volume), 1);
-        const maxBarW = Math.min(130, w * 0.16);
-        const rightEdge = w - 68; // inside right price axis
+      // 3. Upgraded Dual-Tone Volume Profile with Exact Bin Height + 70% VA Bracket
+      if (showVP && sessionStats.vp) {
+        const { bins, vahPrice, valPrice } = sessionStats.vp;
+        const maxVol = Math.max(...bins.map((b) => b.totalVol), 1);
+        const maxBarW = Math.min(145, w * 0.18);
 
-        for (let i = 0; i < nodes.length; i++) {
-          const node = nodes[i];
-          const y = cs.priceToCoordinate(node.price);
-          if (y === null || y < 10 || y > h - 25) continue;
-          const barW = (node.volume / maxVol) * maxBarW;
-          const barH = Math.max(2, (h * 0.65) / nodes.length);
-          ctx.fillStyle = node.is_poc
-            ? 'rgba(245, 158, 11, 0.75)'
-            : node.is_value_area
-            ? 'rgba(56, 189, 248, 0.36)'
-            : 'rgba(148, 163, 184, 0.22)';
-          ctx.fillRect(rightEdge - barW, y - barH / 2, barW, barH);
+        // Shaded 70% Value Area corridor
+        const yVah = cs.priceToCoordinate(vahPrice);
+        const yVal = cs.priceToCoordinate(valPrice);
+        if (yVah !== null && yVal !== null) {
+          const vaTop = Math.min(yVah, yVal);
+          const vaH = Math.abs(yVal - yVah);
+          ctx.fillStyle = 'rgba(56, 189, 248, 0.03)';
+          ctx.fillRect(plotRight - maxBarW, vaTop, maxBarW, vaH);
+          // VA vertical bracket on right edge
+          ctx.strokeStyle = 'rgba(56, 189, 248, 0.55)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(plotRight - 2, vaTop);
+          ctx.lineTo(plotRight - 2, vaTop + vaH);
+          ctx.stroke();
+        }
+
+        for (const bin of bins) {
+          const yTop = cs.priceToCoordinate(bin.high);
+          const yBot = cs.priceToCoordinate(bin.low);
+          if (yTop === null || yBot === null) continue;
+          const top = Math.min(yTop, yBot);
+          const binH = Math.max(2, Math.abs(yBot - yTop) - 1);
+          if (top + binH < 8 || top > h - 22) continue;
+
+          const totalW = (bin.totalVol / maxVol) * maxBarW;
+          const buyRatio = bin.totalVol > 0 ? bin.buyVol / bin.totalVol : 0.5;
+          const buyW = totalW * buyRatio;
+          const sellW = totalW - buyW;
+
+          if (bin.isPoc) {
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.85)';
+            ctx.fillRect(plotRight - 4 - totalW, top, totalW, binH);
+            ctx.strokeStyle = '#fbbf24';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(plotRight - 4 - totalW, top, totalW, binH);
+          } else if (bin.isValueArea) {
+            // Sell segment (left portion) + Buy segment (right portion near price axis)
+            ctx.fillStyle = 'rgba(244, 63, 94, 0.34)';
+            ctx.fillRect(plotRight - 4 - totalW, top, sellW, binH);
+            ctx.fillStyle = 'rgba(16, 185, 129, 0.44)';
+            ctx.fillRect(plotRight - 4 - buyW, top, buyW, binH);
+          } else {
+            ctx.fillStyle = 'rgba(148, 163, 184, 0.22)';
+            ctx.fillRect(plotRight - 4 - totalW, top, totalW, binH);
+          }
         }
       }
 
@@ -435,7 +726,36 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     };
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [cockpit, showVP, showDB, candles]);
+  }, [cockpit, showVP, showDB, showLevels, resolvedBracket, sessionStats]);
+
+  // Toolbar Zoom In / Zoom Out handlers
+  const adjustZoom = (factor: number) => {
+    const chart = chartRef.current;
+    if (!chart) return;
+    const range = chart.timeScale().getVisibleLogicalRange();
+    if (!range) return;
+    const span = range.to - range.from;
+    const center = (range.from + range.to) / 2;
+    const newSpan = Math.max(10, Math.min(allNormalized.length * 1.5, span * factor));
+    chart.timeScale().setVisibleLogicalRange({
+      from: center - newSpan / 2,
+      to: center + newSpan / 2,
+    });
+  };
+
+  const handleToggleReplay = () => {
+    if (effectiveReplayIdx === null) {
+      const symTrade = trades.find((t) => t.symbol.toUpperCase() === symbol.toUpperCase());
+      const startIdx = symTrade
+        ? Math.max(2, findNearestBarIndex(allNormalized, symTrade.entry_time) - 2)
+        : Math.min(allNormalized.length - 1, 5);
+      setEffectiveReplayIdx(startIdx);
+      setIsPlaying(false);
+    } else {
+      setIsPlaying(false);
+      setEffectiveReplayIdx(null);
+    }
+  };
 
   const handleScreenshot = () => {
     const chart = chartRef.current;
@@ -447,10 +767,21 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     link.click();
   };
 
+  const currentReplayBar =
+    effectiveReplayIdx !== null && visibleBars.length > 0
+      ? visibleBars[visibleBars.length - 1]
+      : null;
+
+  const vwapDistPct =
+    sessionStats.lastVwap > 0
+      ? ((sessionStats.lastClose - sessionStats.lastVwap) / sessionStats.lastVwap) * 100
+      : 0;
+
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 330 }}>
-      <div className="chart-toolbar">
-        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
+    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 345 }}>
+      {/* Interactive Chart Toolbar */}
+      <div className="chart-toolbar" style={{ flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
           {['1m', '5m', '15m', '1h', 'D'].map((tf) => (
             <button
               key={tf}
@@ -460,32 +791,61 @@ export const SuperChart: React.FC<SuperChartProps> = ({
               {tf}
             </button>
           ))}
-          <span style={{ color: 'rgba(148,163,184,0.2)', margin: '0 4px' }}>|</span>
+          <span style={{ color: 'rgba(148,163,184,0.2)', margin: '0 3px' }}>|</span>
           <button
             className={`tf-btn ${showIndicators ? 'active' : ''}`}
             onClick={() => setShowIndicators((s) => !s)}
-            title="Toggle EMA(9) & VWAP"
+            title="Toggle EMA(9) + VWAP ±1σ"
           >
-            <SlidersHorizontal size={12} style={{ marginRight: 4, verticalAlign: '-2px' }} />
-            Indicators
+            <SlidersHorizontal size={11} style={{ marginRight: 3, verticalAlign: '-1px' }} />
+            VWAP/EMA
           </button>
           <button
             className={`tf-btn ${showVP ? 'active' : ''}`}
             onClick={() => setShowVP((s) => !s)}
-            title="Volume Profile (VAH / POC / VAL)"
+            title="Volume Profile (Buy/Sell Split + VAH/POC/VAL)"
           >
             VP
           </button>
           <button
+            className={`tf-btn ${showHL ? 'active' : ''}`}
+            onClick={() => setShowHL((s) => !s)}
+            title="Session High & Session Low"
+          >
+            H/L
+          </button>
+          <button
             className={`tf-btn ${showDB ? 'active' : ''}`}
             onClick={() => setShowDB((s) => !s)}
-            title="Dalton Base Zone"
+            title="Dalton Consolidation Base"
           >
             DB
           </button>
+          <button
+            className={`tf-btn ${showLevels ? 'active' : ''}`}
+            onClick={() => setShowLevels((s) => !s)}
+            title="Entry / Stop Loss / Target Zones"
+          >
+            Levels
+          </button>
+          {!isControlledReplay && (
+            <button
+              className={`tf-btn ${effectiveReplayIdx !== null ? 'active' : ''}`}
+              style={{
+                borderColor: effectiveReplayIdx !== null ? 'var(--accent-purple)' : 'rgba(168,85,247,0.35)',
+                color: effectiveReplayIdx !== null ? '#e9d5ff' : 'var(--accent-purple)',
+                background: effectiveReplayIdx !== null ? 'rgba(168,85,247,0.2)' : 'transparent',
+              }}
+              onClick={handleToggleReplay}
+              title="Toggle Bar-by-Bar Synchronized Replay"
+            >
+              <Play size={10} style={{ marginRight: 3, verticalAlign: '-1px' }} />
+              Replay
+            </button>
+          )}
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 4 }}>
           <span
             className="mono"
             style={{
@@ -500,29 +860,41 @@ export const SuperChart: React.FC<SuperChartProps> = ({
             {sessionDate || '2026-11-09'} {isLiveToday ? 'LIVE' : 'LAST SESSION'}
           </span>
           <button
+            className={`icon-btn ${magnetMode ? 'active' : ''}`}
+            style={{ color: magnetMode ? 'var(--accent-cyan)' : undefined }}
+            title="Toggle OHLC Magnet Crosshair"
+            onClick={() => setMagnetMode((m) => !m)}
+          >
+            <Magnet size={13} />
+          </button>
+          <button className="icon-btn" title="Zoom In" onClick={() => adjustZoom(0.72)}>
+            <ZoomIn size={13} />
+          </button>
+          <button className="icon-btn" title="Zoom Out" onClick={() => adjustZoom(1.38)}>
+            <ZoomOut size={13} />
+          </button>
+          <button
             className="icon-btn"
-            title="Fit Chart Scale"
+            title="Fit All Candles"
             onClick={() => chartRef.current?.timeScale().fitContent()}
           >
             <Maximize2 size={13} />
           </button>
-          <button className="icon-btn" title="Save Chart PNG" onClick={handleScreenshot}>
+          <button className="icon-btn" title="Export Chart PNG" onClick={handleScreenshot}>
             <Camera size={13} />
           </button>
         </div>
       </div>
 
-      <div style={{ position: 'relative', flex: 1, minHeight: 295 }}>
-        <div
-          ref={containerRef}
-          style={{ position: 'absolute', inset: 0 }}
-        />
+      {/* Main Chart Viewport */}
+      <div style={{ position: 'relative', flex: 1, minHeight: 280 }}>
+        <div ref={containerRef} style={{ position: 'absolute', inset: 0 }} />
         <canvas
           ref={overlayCanvasRef}
           style={{ position: 'absolute', inset: 0, pointerEvents: 'none', zIndex: 4 }}
         />
 
-        {/* OHLCV Live Crosshair HUD */}
+        {/* Top-Left Interactive Crosshair + VWAP/H-L HUD */}
         <div
           className="mono"
           style={{
@@ -531,32 +903,169 @@ export const SuperChart: React.FC<SuperChartProps> = ({
             left: 10,
             zIndex: 6,
             display: 'flex',
+            flexWrap: 'wrap',
             gap: 10,
             fontSize: 10.5,
-            padding: '3px 8px',
-            borderRadius: 5,
-            background: 'rgba(6, 10, 17, 0.82)',
-            border: '1px solid rgba(148,163,184,0.12)',
+            padding: '4px 9px',
+            borderRadius: 6,
+            background: 'rgba(6, 10, 17, 0.86)',
+            border: '1px solid rgba(148,163,184,0.16)',
             pointerEvents: 'none',
           }}
         >
           {crosshairBar ? (
             <>
-              <span style={{ color: 'var(--text-muted)' }}>{crosshairBar.time}</span>
-              <span>O <strong style={{ color: 'var(--text-main)' }}>{crosshairBar.open.toFixed(2)}</strong></span>
+              <span style={{ color: 'var(--accent-cyan)', fontWeight: 700 }}>{crosshairBar.time}</span>
+              <span>O <strong>{crosshairBar.open.toFixed(2)}</strong></span>
               <span>H <strong style={{ color: 'var(--accent-green)' }}>{crosshairBar.high.toFixed(2)}</strong></span>
               <span>L <strong style={{ color: 'var(--accent-red)' }}>{crosshairBar.low.toFixed(2)}</strong></span>
               <span>C <strong style={{ color: 'var(--accent-cyan)' }}>{crosshairBar.close.toFixed(2)}</strong></span>
+              <span style={{ color: crosshairBar.pct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                ({crosshairBar.pct >= 0 ? '+' : ''}{crosshairBar.pct.toFixed(2)}%)
+              </span>
+              <span>VWAP <strong style={{ color: '#e879f9' }}>{crosshairBar.vwap.toFixed(2)}</strong></span>
               <span>V <strong style={{ color: 'var(--text-muted)' }}>{crosshairBar.vol.toLocaleString()}</strong></span>
             </>
           ) : (
-            <span style={{ color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 6 }}>
-              <Crosshair size={11} />
-              <span>EMA(9) Cyan • VWAP Magenta • <Layers size={11} style={{ verticalAlign: '-2px' }} /> VP + Dalton Base</span>
-            </span>
+            <>
+              <span style={{ color: 'var(--text-dim)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                <Crosshair size={11} />
+                <span>Wheel: Zoom • Drag: Pan</span>
+              </span>
+              {sessionStats.lastVwap > 0 && (
+                <span>
+                  VWAP <strong style={{ color: '#e879f9' }}>₹{sessionStats.lastVwap.toFixed(2)}</strong>{' '}
+                  <span style={{ color: vwapDistPct >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                    ({vwapDistPct >= 0 ? '+' : ''}{vwapDistPct.toFixed(2)}%)
+                  </span>
+                </span>
+              )}
+              {sessionStats.high > 0 && (
+                <span>
+                  S-H/L <strong style={{ color: '#2dd4bf' }}>{sessionStats.high.toFixed(1)}</strong>/
+                  <strong style={{ color: '#fb7185' }}>{sessionStats.low.toFixed(1)}</strong>
+                </span>
+              )}
+              {sessionStats.vp && (
+                <span>
+                  POC <strong style={{ color: '#f59e0b' }}>{sessionStats.vp.pocPrice.toFixed(1)}</strong>
+                </span>
+              )}
+            </>
           )}
         </div>
+
+        {/* Bottom-Left Distinguishable Bracket Legend */}
+        {showLevels && resolvedBracket && (
+          <div
+            className="mono"
+            style={{
+              position: 'absolute',
+              bottom: 28,
+              left: 10,
+              zIndex: 6,
+              display: 'flex',
+              gap: 8,
+              fontSize: 9.5,
+              padding: '3px 8px',
+              borderRadius: 5,
+              background: 'rgba(6, 10, 17, 0.85)',
+              border: '1px solid rgba(148,163,184,0.14)',
+              pointerEvents: 'none',
+            }}
+          >
+            <span style={{ color: '#38bdf8' }}>■ ENTRY {resolvedBracket.entryMid.toFixed(1)}</span>
+            <span style={{ color: '#f43f5e' }}>■ SL {resolvedBracket.stopLoss.toFixed(1)}</span>
+            {resolvedBracket.profitFloor && (
+              <span style={{ color: '#f59e0b' }}>■ FLOOR {resolvedBracket.profitFloor.toFixed(1)}</span>
+            )}
+            <span style={{ color: '#10b981' }}>■ T1 {resolvedBracket.target1.toFixed(1)}</span>
+            {resolvedBracket.target2 && (
+              <span style={{ color: '#34d399' }}>■ T2 {resolvedBracket.target2.toFixed(1)}</span>
+            )}
+          </div>
+        )}
       </div>
+
+      {/* Built-in Synchronized Replay Bar (visible when active in Execution Cockpit) */}
+      {!isControlledReplay && effectiveReplayIdx !== null && allNormalized.length > 0 && (
+        <div
+          className="mono"
+          style={{
+            padding: '6px 12px',
+            borderTop: '1px solid rgba(168,85,247,0.35)',
+            background: 'rgba(168,85,247,0.08)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: 'var(--accent-purple)', fontWeight: 700 }}>REPLAY</span>
+          <button
+            className="icon-btn"
+            onClick={() => {
+              setIsPlaying(false);
+              setEffectiveReplayIdx(Math.max(0, (effectiveReplayIdx ?? 0) - 1));
+            }}
+            title="Step Back 1 Bar"
+          >
+            <SkipBack size={13} />
+          </button>
+          <button
+            className="tf-btn active"
+            style={{ background: 'rgba(168,85,247,0.22)', borderColor: 'var(--accent-purple)', color: '#f3e8ff' }}
+            onClick={() => setIsPlaying((p) => !p)}
+          >
+            {isPlaying ? <Pause size={12} /> : <Play size={12} />}
+          </button>
+          <button
+            className="icon-btn"
+            onClick={() => {
+              setIsPlaying(false);
+              setEffectiveReplayIdx(Math.min(allNormalized.length - 1, (effectiveReplayIdx ?? 0) + 1));
+            }}
+            title="Step Forward 1 Bar"
+          >
+            <SkipForward size={13} />
+          </button>
+          <input
+            type="range"
+            min={0}
+            max={Math.max(0, allNormalized.length - 1)}
+            value={effectiveReplayIdx}
+            onChange={(e) => {
+              setIsPlaying(false);
+              setEffectiveReplayIdx(Number(e.target.value));
+            }}
+            style={{ flex: 1, accentColor: 'var(--accent-purple)', cursor: 'pointer' }}
+          />
+          <span style={{ color: 'var(--text-main)' }}>
+            Bar {(effectiveReplayIdx ?? 0) + 1}/{allNormalized.length} (
+            {currentReplayBar
+              ? new Date((currentReplayBar.ts + 19800) * 1000).toISOString().slice(11, 16)
+              : '--'}
+            )
+          </span>
+          <button
+            className="tf-btn"
+            onClick={() => setPlaySpeedMs((s) => (s === 450 ? 200 : s === 200 ? 90 : 450))}
+            title="Cycle Playback Speed"
+          >
+            {playSpeedMs === 450 ? '1x' : playSpeedMs === 200 ? '2x' : '5x'}
+          </button>
+          <button
+            className="icon-btn"
+            title="Exit Replay (Return to Full Session)"
+            onClick={() => {
+              setIsPlaying(false);
+              setEffectiveReplayIdx(null);
+            }}
+          >
+            <RotateCcw size={13} />
+          </button>
+        </div>
+      )}
     </div>
   );
 };

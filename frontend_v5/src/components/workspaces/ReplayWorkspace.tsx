@@ -1,25 +1,45 @@
-import React, { useEffect, useState } from 'react';
-import { ShieldAlert, Zap } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Play, Pause, SkipBack, SkipForward, ShieldAlert, Zap } from 'lucide-react';
 import { AuditLedgerResponse, AuditTrade, CandleBar, CockpitSymbolData } from '../../types/api';
-import { SuperChart } from '../charts/SuperChart';
+import { ActiveBracketOverlay, SuperChart } from '../charts/SuperChart';
+import { findNearestBarIndex, normalizeAndComputeIndicators } from '../../utils/chartMath';
 
 interface ReplayWorkspaceProps {
   auditLedger: AuditLedgerResponse | null;
   onSelectSymbolForCockpit: (sym: string) => void;
 }
 
-export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger }) => {
+export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({
+  auditLedger,
+  onSelectSymbolForCockpit,
+}) => {
   const trades = auditLedger?.trades || [];
   const [selectedTradeIdx, setSelectedTradeIdx] = useState(0);
-  const [stepPct, setStepPct] = useState(55);
   const [candles, setCandles] = useState<CandleBar[]>([]);
   const [cockpit, setCockpit] = useState<CockpitSymbolData | null>(null);
+  const [replayIdx, setReplayIdx] = useState<number>(20);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [speedMs, setSpeedMs] = useState(400);
   const [stressMode, setStressMode] = useState<'NONE' | 'CRASH' | 'SQUEEZE'>('NONE');
 
   const trade: AuditTrade | undefined = trades[selectedTradeIdx] || trades[0];
 
+  const normalizedBars = useMemo(() => normalizeAndComputeIndicators(candles), [candles]);
+
+  const { entryIdx, exitIdx } = useMemo(() => {
+    if (!trade || normalizedBars.length === 0) return { entryIdx: 0, exitIdx: 0 };
+    const en = findNearestBarIndex(normalizedBars, trade.entry_time);
+    const ex = Math.max(en + 1, findNearestBarIndex(normalizedBars, trade.exit_time));
+    return {
+      entryIdx: en,
+      exitIdx: Math.min(normalizedBars.length - 1, ex),
+    };
+  }, [trade, normalizedBars]);
+
+  // Fetch 5m candles + cockpit context whenever selected trade changes
   useEffect(() => {
     if (!trade) return;
+    setIsPlaying(false);
     let cancelled = false;
     Promise.all([
       fetch(`/api/candles/${trade.symbol}`).then((r) => r.json()),
@@ -27,65 +47,185 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
     ])
       .then(([cRes, sRes]) => {
         if (cancelled) return;
-        if (cRes?.candles) setCandles(cRes.candles);
+        if (cRes?.candles) {
+          setCandles(cRes.candles);
+          const norm = normalizeAndComputeIndicators(cRes.candles);
+          const en = findNearestBarIndex(norm, trade.entry_time);
+          const ex = Math.min(norm.length - 1, Math.max(en + 1, findNearestBarIndex(norm, trade.exit_time)));
+          setReplayIdx(Math.min(norm.length - 1, Math.floor((en + ex) / 2)));
+        }
         if (sRes?.status === 'SUCCESS') setCockpit(sRes);
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
-  }, [trade?.symbol]);
+  }, [trade?.symbol, selectedTradeIdx]);
+
+  // Synchronized Play loop
+  useEffect(() => {
+    if (!isPlaying || normalizedBars.length === 0) return;
+    const id = setInterval(() => {
+      setReplayIdx((prev) => {
+        if (prev >= normalizedBars.length - 1) {
+          setIsPlaying(false);
+          return prev;
+        }
+        return prev + 1;
+      });
+    }, speedMs);
+    return () => clearInterval(id);
+  }, [isPlaying, speedMs, normalizedBars.length]);
+
+  // Causal bar-by-bar Two-Mode calculation synced to replayIdx
+  const replayAnalytics = useMemo(() => {
+    if (!trade || normalizedBars.length === 0) {
+      return {
+        barTime: trade?.entry_time || '--',
+        curPrice: trade?.entry_price || 0,
+        curR: 0,
+        peakR: 0,
+        activeFloor: null as number | null,
+        modeLabel: 'PRE-ENTRY WATCHING',
+        unrealizedCash: 0,
+      };
+    }
+
+    const idx = Math.min(normalizedBars.length - 1, Math.max(0, replayIdx));
+    const bar = normalizedBars[idx];
+    const ist = new Date((bar.ts + 19800) * 1000);
+    const barTime = ist.toISOString().slice(11, 16);
+    const isShort = trade.strategy.includes('SHORT');
+    const riskPerSh = trade.risk_per_share || Math.abs(trade.entry_price - trade.stop_loss) || 1;
+
+    if (idx < entryIdx) {
+      return {
+        barTime,
+        curPrice: bar.close,
+        curR: 0,
+        peakR: 0,
+        activeFloor: null,
+        modeLabel: 'PRE-ENTRY CALIBRATION',
+        unrealizedCash: 0,
+      };
+    }
+
+    // Track actual bar-by-bar peak excursion from entryIdx up to idx (clamped at exitIdx if past exit)
+    const evalEnd = Math.min(idx, exitIdx);
+    let maxFavDist = 0;
+    for (let i = entryIdx; i <= evalEnd; i++) {
+      const b = normalizedBars[i];
+      const fav = isShort ? trade.entry_price - b.low : b.high - trade.entry_price;
+      if (fav > maxFavDist) maxFavDist = fav;
+    }
+
+    const peakR = Number((maxFavDist / riskPerSh).toFixed(2));
+    const evalBar = normalizedBars[evalEnd];
+    const curPrice = idx >= exitIdx ? trade.exit_price : evalBar.close;
+    const curDist = isShort ? trade.entry_price - curPrice : curPrice - trade.entry_price;
+    const curR = Number((curDist / riskPerSh).toFixed(2));
+    const grossNow = curDist * trade.total_qty;
+    const netNow = Number((grossNow - trade.fees).toFixed(2));
+
+    let activeFloor: number | null = null;
+    let modeLabel = 'OPEN RISK ZONE (-1.0R SL)';
+
+    if (idx >= exitIdx) {
+      activeFloor = trade.exit_price;
+      modeLabel = `EXITED: ${trade.exit_reason}`;
+    } else if (peakR >= 0.7) {
+      const trailDist = peakR * 0.7 * riskPerSh;
+      activeFloor = Number((isShort ? trade.entry_price - trailDist : trade.entry_price + trailDist).toFixed(2));
+      modeLabel = 'MODE B: 70% GAIN HARVEST';
+    } else if (peakR >= 0.5) {
+      const feePadPerSh = (trade.fees + 10) / Math.max(1, trade.total_qty);
+      activeFloor = Number((isShort ? trade.entry_price - feePadPerSh : trade.entry_price + feePadPerSh).toFixed(2));
+      modeLabel = 'MODE A: FEE GUARD CLAMPED';
+    } else if (peakR >= 0.25) {
+      modeLabel = 'NOISE BUFFER (HOLD SL)';
+    }
+
+    return {
+      barTime,
+      curPrice,
+      curR,
+      peakR,
+      activeFloor,
+      modeLabel,
+      unrealizedCash: idx >= exitIdx ? trade.net_pnl : netNow,
+    };
+  }, [trade, normalizedBars, replayIdx, entryIdx, exitIdx]);
+
+  const bracketOverlay: ActiveBracketOverlay | null = useMemo(() => {
+    if (!trade) return null;
+    const isShort = trade.strategy.includes('SHORT');
+    const pad = trade.entry_price * 0.0006;
+    return {
+      direction: isShort ? 'SHORT' : 'LONG',
+      entryLow: trade.entry_price - pad,
+      entryHigh: trade.entry_price + pad,
+      entryMid: trade.entry_price,
+      stopLoss: trade.stop_loss,
+      profitFloor: replayAnalytics.activeFloor,
+      target1: trade.target_1,
+      target2: null,
+    };
+  }, [trade, replayAnalytics.activeFloor]);
 
   if (!trade) {
     return (
       <div className="panel-card" style={{ padding: 24, textAlign: 'center', color: 'var(--text-muted)' }}>
-        Loading verified execution trades for bar-by-bar replay...
+        Loading verified execution trades for synchronized replay...
       </div>
     );
   }
 
   const totalRisk = trade.risk_per_share * trade.total_qty;
-  const currentR = Number(((stepPct / 100) * Math.max(trade.peak_r, 0.5)).toFixed(2));
-  const modeStatus =
-    currentR >= 0.7 && trade.peak_r >= 0.7
-      ? 'MODE B: 70% GAIN TRAIL ACTIVE'
-      : currentR >= 0.5 && trade.peak_r >= 0.5
-      ? 'MODE A: FEE GUARD CLAMPED'
-      : 'OPEN NOISE BUFFER (INITIAL SL)';
 
-  const lockedCash =
-    currentR >= 0.5 && trade.peak_r >= 0.5
-      ? `+₹${trade.net_pnl.toFixed(2)} Protected`
-      : `-₹${totalRisk.toFixed(2)} At Risk`;
+  // Milestone bar jumpers
+  const jumpTo = (mode: 'ENTRY' | 'MID' | 'PEAK' | 'EXIT') => {
+    setIsPlaying(false);
+    if (mode === 'ENTRY') setReplayIdx(entryIdx);
+    else if (mode === 'MID') setReplayIdx(Math.min(exitIdx, Math.floor(entryIdx + (exitIdx - entryIdx) * 0.45)));
+    else if (mode === 'PEAK') setReplayIdx(Math.min(exitIdx, Math.floor(entryIdx + (exitIdx - entryIdx) * 0.78)));
+    else setReplayIdx(exitIdx);
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {/* Trade Picker Bar */}
-      <div className="panel-card" style={{ padding: '10px 12px', gap: 8 }}>
+      {/* Top Trade Selector Bar */}
+      <div className="panel-card" style={{ padding: '8px 12px' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 8 }}>
-          <div style={{ fontSize: 12, fontWeight: 700 }}>
-            Two-Mode Neutralizer — Historical Trade Replay ({auditLedger?.date || 'Session'})
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+            <span style={{ fontSize: 12, fontWeight: 700 }}>
+              Synchronized Two-Mode Trade Replay ({auditLedger?.date || 'Session'})
+            </span>
+            <button
+              className="tf-btn"
+              style={{ border: '1px solid rgba(56,189,248,0.35)', color: 'var(--accent-cyan)' }}
+              onClick={() => onSelectSymbolForCockpit(trade.symbol)}
+            >
+              Open {trade.symbol} in Cockpit
+            </button>
           </div>
-          <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', gap: 5, flexWrap: 'wrap' }}>
             {trades.map((t, idx) => (
               <button
                 key={`${t.symbol}-${idx}`}
                 className={`tf-btn ${idx === selectedTradeIdx ? 'active' : ''}`}
                 style={{ border: '1px solid var(--border-subtle)' }}
-                onClick={() => {
-                  setSelectedTradeIdx(idx);
-                  setStepPct(55);
-                }}
+                onClick={() => setSelectedTradeIdx(idx)}
               >
-                {t.symbol} ({t.net_pnl >= 0 ? '+' : ''}₹{t.net_pnl.toFixed(2)})
+                {t.symbol} ({t.net_pnl >= 0 ? '+' : ''}₹{t.net_pnl.toFixed(1)})
               </button>
             ))}
           </div>
         </div>
       </div>
 
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.35fr) minmax(0, 1fr)', gap: 8 }}>
-        {/* Left: Actual 5m Candle Replay Chart */}
+      {/* Main Synced Replay Grid */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: 8 }}>
+        {/* Left: Synced SuperChart revealing candles bar-by-bar */}
         <div className="panel-card">
           <SuperChart
             symbol={trade.symbol}
@@ -96,10 +236,13 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
             isLiveToday={false}
             cockpit={cockpit}
             trades={[trade]}
+            externalReplayIndex={replayIdx}
+            onExternalReplayIndexChange={(i) => setReplayIdx(i ?? Math.max(0, normalizedBars.length - 1))}
+            overrideBracket={bracketOverlay}
           />
         </div>
 
-        {/* Right: Scrubber + Payoff Matrix + Stress Simulator */}
+        {/* Right: Synchronized Transport, Two-Mode Neutralizer & Stress Drawer */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
           <div className="panel-card" style={{ padding: 12, gap: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
@@ -112,72 +255,118 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
                   fontSize: 10,
                   padding: '2px 8px',
                   borderRadius: 4,
-                  background: currentR >= 0.5 ? 'rgba(16,185,129,0.16)' : 'rgba(244,63,94,0.16)',
-                  color: currentR >= 0.5 ? 'var(--accent-green)' : 'var(--accent-red)',
+                  background: replayAnalytics.peakR >= 0.5 ? 'rgba(16,185,129,0.16)' : 'rgba(244,63,94,0.16)',
+                  color: replayAnalytics.peakR >= 0.5 ? 'var(--accent-green)' : 'var(--accent-red)',
                 }}
               >
-                {modeStatus}
+                {replayAnalytics.modeLabel}
               </span>
             </div>
 
-            <div style={{ display: 'flex', gap: 6 }}>
-              {[
-                { label: '0.0R Entry', val: 0 },
-                { label: '+0.30R Noise', val: 35 },
-                { label: '+0.50R Mode A', val: 65 },
-                { label: 'Exit Banked', val: 100 },
-              ].map((m) => (
-                <button
-                  key={m.label}
-                  className={`tf-btn ${Math.abs(stepPct - m.val) < 15 ? 'active' : ''}`}
-                  style={{ flex: 1, border: '1px solid var(--border-subtle)', textAlign: 'center' }}
-                  onClick={() => setStepPct(m.val)}
-                >
-                  {m.label}
-                </button>
-              ))}
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-              <span className="mono" style={{ fontSize: 11, color: 'var(--text-dim)' }}>{trade.entry_time}</span>
+            {/* Synchronized Playback Transport Controls */}
+            <div
+              className="mono"
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                background: '#060a11',
+                padding: '6px 8px',
+                borderRadius: 6,
+                border: '1px solid var(--border-subtle)',
+              }}
+            >
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setIsPlaying(false);
+                  setReplayIdx((r) => Math.max(0, r - 1));
+                }}
+                title="Previous Bar"
+              >
+                <SkipBack size={14} />
+              </button>
+              <button
+                className="tf-btn active"
+                onClick={() => setIsPlaying((p) => !p)}
+                title="Play / Pause Synchronized Replay"
+              >
+                {isPlaying ? <Pause size={13} /> : <Play size={13} />}
+              </button>
+              <button
+                className="icon-btn"
+                onClick={() => {
+                  setIsPlaying(false);
+                  setReplayIdx((r) => Math.min(normalizedBars.length - 1, r + 1));
+                }}
+                title="Next Bar"
+              >
+                <SkipForward size={14} />
+              </button>
               <input
                 type="range"
                 min={0}
-                max={100}
-                value={stepPct}
-                onChange={(e) => setStepPct(Number(e.target.value))}
+                max={Math.max(0, normalizedBars.length - 1)}
+                value={replayIdx}
+                onChange={(e) => {
+                  setIsPlaying(false);
+                  setReplayIdx(Number(e.target.value));
+                }}
                 style={{ flex: 1, accentColor: 'var(--accent-cyan)', cursor: 'pointer' }}
               />
-              <span className="mono" style={{ fontSize: 12, fontWeight: 800, color: 'var(--accent-cyan)' }}>
-                +{currentR.toFixed(2)}R
+              <span style={{ fontSize: 11, color: 'var(--accent-cyan)', minWidth: 46, textAlign: 'right' }}>
+                {replayAnalytics.barTime}
               </span>
+              <button
+                className="tf-btn"
+                onClick={() => setSpeedMs((s) => (s === 400 ? 180 : s === 180 ? 80 : 400))}
+              >
+                {speedMs === 400 ? '1x' : speedMs === 180 ? '2x' : '5x'}
+              </button>
             </div>
 
+            {/* Quick Milestone Jumpers */}
+            <div style={{ display: 'flex', gap: 6 }}>
+              <button className="tf-btn" style={{ flex: 1, border: '1px solid var(--border-subtle)' }} onClick={() => jumpTo('ENTRY')}>
+                Entry ({trade.entry_time})
+              </button>
+              <button className="tf-btn" style={{ flex: 1, border: '1px solid var(--border-subtle)' }} onClick={() => jumpTo('MID')}>
+                Noise Chop
+              </button>
+              <button className="tf-btn" style={{ flex: 1, border: '1px solid var(--border-subtle)' }} onClick={() => jumpTo('PEAK')}>
+                Peak MFE
+              </button>
+              <button className="tf-btn" style={{ flex: 1, border: '1px solid var(--border-subtle)' }} onClick={() => jumpTo('EXIT')}>
+                Exit ({trade.exit_time})
+              </button>
+            </div>
+
+            {/* Live Replaying Metrics */}
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 8 }}>
               <div style={{ background: '#060a11', padding: 8, borderRadius: 6, border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Entry / Exit</div>
-                <div className="mono" style={{ fontSize: 11.5, fontWeight: 700, marginTop: 2 }}>
-                  ₹{trade.entry_price.toFixed(1)} ➔ ₹{trade.exit_price.toFixed(1)}
+                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Current Bar LTP</div>
+                <div className="mono" style={{ fontSize: 12, fontWeight: 700, marginTop: 2 }}>
+                  ₹{replayAnalytics.curPrice.toFixed(2)} ({replayAnalytics.curR >= 0 ? '+' : ''}{replayAnalytics.curR.toFixed(2)}R)
                 </div>
               </div>
               <div style={{ background: '#060a11', padding: 8, borderRadius: 6, border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Qty / Notional</div>
-                <div className="mono" style={{ fontSize: 11.5, fontWeight: 700, marginTop: 2 }}>
-                  {trade.total_qty}sh (₹{Math.round(trade.notional).toLocaleString('en-IN')})
+                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Peak Excursion / Floor</div>
+                <div className="mono" style={{ fontSize: 12, fontWeight: 700, marginTop: 2, color: 'var(--accent-amber)' }}>
+                  +{replayAnalytics.peakR.toFixed(2)}R {replayAnalytics.activeFloor ? `• ₹${replayAnalytics.activeFloor.toFixed(1)}` : ''}
                 </div>
               </div>
               <div style={{ background: '#060a11', padding: 8, borderRadius: 6, border: '1px solid var(--border-subtle)' }}>
-                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Cash Protection</div>
+                <div style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>Replayed Net PnL</div>
                 <div
                   className="mono"
                   style={{
-                    fontSize: 11.5,
+                    fontSize: 12,
                     fontWeight: 700,
                     marginTop: 2,
-                    color: currentR >= 0.5 ? 'var(--accent-green)' : 'var(--accent-amber)',
+                    color: replayAnalytics.unrealizedCash >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
                   }}
                 >
-                  {lockedCash}
+                  {replayAnalytics.unrealizedCash >= 0 ? '+' : ''}₹{replayAnalytics.unrealizedCash.toFixed(2)}
                 </div>
               </div>
             </div>
@@ -187,8 +376,8 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
               <thead>
                 <tr>
                   <th>Model Comparison</th>
-                  <th>Outcome</th>
-                  <th style={{ textAlign: 'right' }}>Net Cash</th>
+                  <th>Behavior on This Trade</th>
+                  <th style={{ textAlign: 'right' }}>Final Net</th>
                 </tr>
               </thead>
               <tbody>
@@ -219,7 +408,7 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
             </table>
           </div>
 
-          {/* Interactive Stress Test Drawer (Zero browser alerts) */}
+          {/* Stress Test Drawer */}
           <div className="panel-card" style={{ padding: 12, gap: 8 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
               <span style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
@@ -261,7 +450,7 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({ auditLedger })
                 {stressMode === 'CRASH' ? (
                   <>
                     <div><strong style={{ color: 'var(--accent-green)' }}>PRE-FLIGHT PASSED:</strong> Cash Reserve Floor ₹2,500.00 remains 100% intact.</div>
-                    <div>Notional {Math.round(trade.notional).toLocaleString('en-IN')} / ₹8,382 = {(trade.notional / 8382.07).toFixed(2)}x (Bounded ≤ 3.50x Cap).</div>
+                    <div>Notional ₹{Math.round(trade.notional).toLocaleString('en-IN')} / ₹8,382 = {(trade.notional / 8382.07).toFixed(2)}x (Bounded ≤ 3.50x Cap).</div>
                     <div>1-Trade Mutex prevents correlated multi-stock margin spiral.</div>
                   </>
                 ) : (

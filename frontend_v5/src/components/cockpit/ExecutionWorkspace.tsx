@@ -359,7 +359,7 @@ export const ExecutionWorkspace: React.FC<ExecutionWorkspaceProps> = ({
               </div>
               <div className="kv-row">
                 <span style={{ color: 'var(--text-muted)' }}>Entry Zone</span>
-                <strong className="mono">{brief?.entry_zone || '--'}</strong>
+                <strong className="mono" style={{ color: 'var(--accent-cyan)' }}>{brief?.entry_zone || '--'}</strong>
               </div>
               <div className="kv-row">
                 <span style={{ color: 'var(--text-muted)' }}>Target 1 (1.0R)</span>
