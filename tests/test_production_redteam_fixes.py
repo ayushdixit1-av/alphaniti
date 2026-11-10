@@ -671,12 +671,20 @@ def test_redteam3_sll_trail_modify_and_double_fill_prevention(tmp_path):
     daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
     assert len(events["placed"]) == 2  # Entry + SL-L (ORD-2)
 
-    # Move peak to +0.55R -> active_floor ratchets up and calls modify_order on ORD-2
+    # Move peak to +0.55R -> patient hold preserves initial SL (no premature +0.50R choke)
     daemon.state["market_data"]["SBIN"].update({
         "ltp": 1006.6, "bar_open": 1003.0, "bar_high": 1007.0, "bar_low": 1002.5,
         "last_quote_ts": time.time(),
     })
     daemon.manage_active_trade(t0 + timedelta(minutes=1))
+    assert len(events["modified"]) == 0
+
+    # Move peak past +1.15R -> active_floor ratchets up and calls modify_order on ORD-2
+    daemon.state["market_data"]["SBIN"].update({
+        "ltp": 1014.4, "bar_open": 1006.6, "bar_high": 1015.0, "bar_low": 1006.0,
+        "last_quote_ts": time.time(),
+    })
+    daemon.manage_active_trade(t0 + timedelta(minutes=2))
     assert len(events["modified"]) == 1
     assert events["modified"][0]["groww_order_id"] == "ORD-2"
     assert events["modified"][0]["trigger_price"] == daemon.state["active_trade"]["active_floor"]
@@ -687,7 +695,7 @@ def test_redteam3_sll_trail_modify_and_double_fill_prevention(tmp_path):
         "ltp": 999.0, "bar_open": 1002.0, "bar_high": 1002.5, "bar_low": 998.5,
         "last_quote_ts": time.time(),
     })
-    daemon.manage_active_trade(t0 + timedelta(minutes=2))
+    daemon.manage_active_trade(t0 + timedelta(minutes=3))
     assert len(events["placed"]) == count_before_exit  # Zero duplicate sell!
     assert daemon.state["active_trade"] is None
     closed = daemon.state["trade_history"][-1]

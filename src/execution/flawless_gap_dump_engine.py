@@ -10,8 +10,17 @@ class FlawlessGapDumpEngine:
     AlphaNiti v26.3 Sovereign Execution & Risk Architecture.
     Rectifies ALL 10 Red-Team Concerns + Air-Pocket Jump-CVaR & Vacuum Recovery.
     """
-    def __init__(self, capital: float = 8382.07):
+    def __init__(
+        self,
+        capital: float = 8382.07,
+        target_1_r: float = 1.40,
+        ratchet_trigger_r: float = 0.50,
+        trail_capture_ratio: float = 0.70,
+    ):
         self.capital = capital
+        self.target_1_r = float(target_1_r)
+        self.ratchet_trigger_r = float(ratchet_trigger_r)
+        self.trail_capture_ratio = float(trail_capture_ratio)
         self.fixed_fee = 55.00 # Fallback ceiling fee
         self.cost_model = IndianStatutoryCostModel()
         self.poisson_buffer = 10.00 # Rs 10.00 jump buffer (absorbs 10-tick gap)
@@ -169,7 +178,7 @@ class FlawlessGapDumpEngine:
         
         # Concern 1: Fee-Padded Target 1 Equation
         fee_per_q1_share = effective_fee / q1
-        target_1_dist = (1.40 * risk_per_share) + fee_per_q1_share
+        target_1_dist = (self.target_1_r * risk_per_share) + fee_per_q1_share
         sign = -1.0 if direction.upper() == "SHORT" else 1.0
         target_1_price = round(entry_price + sign * target_1_dist, 2)
         target_2_est_price = round(entry_price + sign * (2.50 * risk_per_share), 2)
@@ -282,24 +291,25 @@ class FlawlessGapDumpEngine:
                 "reason": "ADVERSE_FLOW_INVALIDATION_CUT",
             }
 
-        # Step 3: Two-Mode Floor with Poisson Buffer + Stale-Chop Time-Decay Shield
+        # Step 3: Two-Mode Floor with Poisson Buffer + Runner Lock + Stale-Chop Time-Decay Shield
         fee_guard_dist = (actual_fee + self.poisson_buffer) / max(1, qty)
-        if new_peak_r >= 0.50:
+        if new_peak_r >= self.ratchet_trigger_r:
             # Concern 9: Dual sub-bar CVD persistence eliminates single-spike whale traps
             adversarial_flow = (cvd_delta > 0) if is_short else (cvd_delta < 0)
             is_confirmed_reversal = (bar_vol > 1.4 * avg_vol) and adversarial_flow and cvd_persistent
+            is_runner_zone = new_peak_r >= self.target_1_r
 
             # Only ratchet to full fee_guard_price once favorable excursion exceeds fee_guard_dist;
             # otherwise lock conservative breakeven so floor never jumps above current market price!
             safe_guard_dist = min(fee_guard_dist, max(0.0, (new_peak_r - 0.15) * risk_per_share))
             safe_guard_price = round(entry_price + sign * safe_guard_dist, 2)
 
-            if is_confirmed_reversal:
-                # Mode B: Confirmed institutional reversal -> Lock in 70% of peak gains
-                locked_r = max(0.48, new_peak_r * 0.70)
+            if is_confirmed_reversal or is_runner_zone:
+                # Mode B / Runner: Confirmed reversal or >= T1 extension -> Lock trailing fraction of peak gains
+                locked_r = max(0.48, new_peak_r * self.trail_capture_ratio)
                 tight_floor = round(entry_price + sign * (locked_r * risk_per_share), 2)
                 candidate_floor = min(tight_floor, safe_guard_price) if is_short else max(tight_floor, safe_guard_price)
-                mode = "MODE_B_PERSISTENT_CVD_HARVEST"
+                mode = "MODE_B_PERSISTENT_CVD_HARVEST" if is_confirmed_reversal else "RUNNER_PROFIT_TRAIL"
             else:
                 # Mode A: Brownian Noise -> Safe breathing room without inverting floor above spot
                 candidate_floor = safe_guard_price
