@@ -1559,6 +1559,238 @@ def get_cockpit_symbol(symbol: str):
         "volume_profile": vp_data
     }
 
+@app.get("/api/risk_command")
+def get_risk_command():
+    try:
+        from live_strategy_daemon import daemon
+        ds = daemon.state if daemon else {}
+    except Exception:
+        ds = {}
+
+    acc = ds.get("account", {})
+    clear_cash = float(acc.get("clear_cash", 8382.07))
+    available_margin = float(acc.get("available_margin", clear_cash))
+    mis_used = float(acc.get("mis_margin_used", 0.0))
+    hard_floor = 2500.0
+    deployable_margin = max(0.0, round(clear_cash - hard_floor, 2))
+
+    # Van Tharp Risk Parameters & Daily Loss Limit (2.0R = 3.2% Daily Stop; 5.0% Tail Ceiling)
+    risk_pct = 1.6
+    risk_per_trade_rs = round(clear_cash * (risk_pct / 100.0), 2)
+    daily_loss_limit_pct = 3.2
+    daily_loss_limit_rs = round(clear_cash * (daily_loss_limit_pct / 100.0), 2)
+    max_notional_mult = 3.50
+    max_notional_cap_rs = round(clear_cash * max_notional_mult, 2)
+
+    active_trade = ds.get("active_trade")
+    active_notional = 0.0
+    active_risk_rs = 0.0
+    active_unrealized = 0.0
+    if active_trade and active_trade.get("status") == "OPEN":
+        active_notional = float(active_trade.get("notional", 0.0))
+        active_risk_rs = round(
+            abs(float(active_trade.get("entry_price", 0.0)) - float(active_trade.get("stop_loss", 0.0)))
+            * float(active_trade.get("remaining_qty", active_trade.get("total_qty", 0))),
+            2
+        )
+        active_unrealized = float(active_trade.get("unrealized_pnl", 0.0))
+
+    ledger = get_audit_ledger()
+    trades = ledger.get("trades", [])
+    is_open_mkt = ds.get("market_status", {}).get("is_open", False)
+    live_history = ds.get("trade_history", [])
+    session_trades = live_history if (is_open_mkt and live_history) else trades
+
+    sorted_trades = sorted(session_trades, key=lambda t: str(t.get("exit_time", "")))
+    cum_pnl = 0.0
+    peak_pnl = 0.0
+    max_dd_rs = 0.0
+    max_dd_pct = 0.0
+    eq_series = [{"time": "09:15", "equity": round(clear_cash, 2), "cum_pnl": 0.0, "drawdown_rs": 0.0, "drawdown_pct": 0.0}]
+
+    peak_notional_session = 0.0
+    for tr in sorted_trades:
+        net_v = float(tr.get("net_pnl", 0.0))
+        notional_v = float(tr.get("notional", 0.0))
+        if notional_v > peak_notional_session:
+            peak_notional_session = notional_v
+        cum_pnl = round(cum_pnl + net_v, 2)
+        if cum_pnl > peak_pnl:
+            peak_pnl = cum_pnl
+        dd_rs = round(cum_pnl - peak_pnl, 2)
+        dd_pct = round((dd_rs / (clear_cash + peak_pnl)) * 100.0, 2) if (clear_cash + peak_pnl) > 0 else 0.0
+        if dd_rs < max_dd_rs:
+            max_dd_rs = dd_rs
+            max_dd_pct = dd_pct
+        eq_series.append({
+            "time": str(tr.get("exit_time", "--")),
+            "symbol": tr.get("symbol", ""),
+            "equity": round(clear_cash + cum_pnl, 2),
+            "cum_pnl": cum_pnl,
+            "drawdown_rs": dd_rs,
+            "drawdown_pct": dd_pct
+        })
+
+    if active_unrealized != 0.0:
+        live_cum = round(cum_pnl + active_unrealized, 2)
+        if live_cum > peak_pnl:
+            peak_pnl = live_cum
+        dd_rs = round(live_cum - peak_pnl, 2)
+        dd_pct = round((dd_rs / (clear_cash + peak_pnl)) * 100.0, 2) if (clear_cash + peak_pnl) > 0 else 0.0
+        if dd_rs < max_dd_rs:
+            max_dd_rs = dd_rs
+            max_dd_pct = dd_pct
+        eq_series.append({
+            "time": "LIVE",
+            "symbol": active_trade.get("symbol", "") if active_trade else "",
+            "equity": round(clear_cash + live_cum, 2),
+            "cum_pnl": live_cum,
+            "drawdown_rs": dd_rs,
+            "drawdown_pct": dd_pct
+        })
+
+    # Daily loss consumed (only positive consumption if net day PnL < 0; otherwise worst drawdown)
+    current_day_pnl = float(ds.get("today_net_pnl", 0.0)) + active_unrealized if is_open_mkt else cum_pnl
+    daily_loss_used_rs = round(max(0.0, -current_day_pnl), 2)
+    daily_loss_remaining_rs = round(max(0.0, daily_loss_limit_rs - daily_loss_used_rs), 2)
+    daily_loss_consumed_pct = round(min(100.0, (daily_loss_used_rs / daily_loss_limit_rs) * 100.0), 1) if daily_loss_limit_rs > 0 else 0.0
+
+    utilization_pct = round((active_notional / max_notional_cap_rs) * 100.0, 1) if max_notional_cap_rs > 0 else 0.0
+    session_peak_util_pct = round((peak_notional_session / max_notional_cap_rs) * 100.0, 1) if max_notional_cap_rs > 0 else 0.0
+
+    # Circuit Breakers live audit
+    ms = ds.get("market_status", {})
+    guards = ds.get("safety_guards", {})
+    lat_guard = guards.get("latency_watchdog", {})
+    lat_ms = float(lat_guard.get("rolling_latency_ms", 65.0))
+    tok_guard = guards.get("token_sentinel", {})
+    tok_valid = bool(tok_guard.get("valid", True))
+    regime = ds.get("strategy", {}).get("macro_regime", "ROTATIONAL_CHOP")
+
+    breakers = [
+        {
+            "id": "EXCHANGE_SESSION",
+            "name": "Exchange & Holiday Gate",
+            "status": "ARMED" if ms.get("is_open") else ("HOLIDAY LOCK" if ms.get("is_holiday") else "POST-MARKET LOCK"),
+            "severity": "OK" if ms.get("is_open") else "WARN",
+            "live_value": ms.get("status_label", "STANDBY"),
+            "threshold": "09:15–15:30 IST (Non-Holiday)",
+            "detail": f"Next Session: {ms.get('next_session', '--')}"
+        },
+        {
+            "id": "LATENCY_WATCHDOG",
+            "name": "Broker Latency Watchdog",
+            "status": "TRIPPED" if lat_ms > 500 else ("BUFFERED" if lat_ms > 200 else "ARMED"),
+            "severity": "CRITICAL" if lat_ms > 500 else ("WARN" if lat_ms > 200 else "OK"),
+            "live_value": f"{lat_ms:.1f} ms ({lat_guard.get('route_mode', 'FAST_PEGGED_LIMIT')})",
+            "threshold": "<= 200ms Optimal / 500ms Halt",
+            "detail": "Auto-aborts orders if gateway congestion exceeds 500ms"
+        },
+        {
+            "id": "SEBI_TOKEN_SENTINEL",
+            "name": "SEBI 06:00 AM Token Guard",
+            "status": "ARMED" if tok_valid else "TRIPPED",
+            "severity": "OK" if tok_valid else "CRITICAL",
+            "live_value": tok_guard.get("status", "ARMED_AND_VALID"),
+            "threshold": "Post-06:00 AM IST ES256 Cycle",
+            "detail": f"Expires: {tok_guard.get('expires_at', '06:00 AM IST Next Cycle')}"
+        },
+        {
+            "id": "MARGIN_FLOOR",
+            "name": "Upfront Cash Reserve Floor",
+            "status": "ARMED" if clear_cash >= hard_floor else "TRIPPED",
+            "severity": "OK" if clear_cash >= hard_floor else "CRITICAL",
+            "live_value": f"₹{clear_cash:,.2f} (Buffer ₹{deployable_margin:,.2f})",
+            "threshold": f">= ₹{hard_floor:,.2f} Hard Floor",
+            "detail": f"3.50x Cap: ₹{max_notional_cap_rs:,.2f}"
+        },
+        {
+            "id": "DAILY_LOSS_STOP",
+            "name": "Daily Loss Limit Breaker",
+            "status": "TRIPPED" if daily_loss_used_rs >= daily_loss_limit_rs else "ARMED",
+            "severity": "CRITICAL" if daily_loss_used_rs >= daily_loss_limit_rs else "OK",
+            "live_value": f"₹{daily_loss_used_rs:.2f} Used / ₹{daily_loss_remaining_rs:.2f} Left",
+            "threshold": f"-₹{daily_loss_limit_rs:.2f} (-{daily_loss_limit_pct:.1f}% / 2.0R)",
+            "detail": "Halts new intraday entries if daily net equity drops by 2.0R"
+        },
+        {
+            "id": "ONE_TRADE_MUTEX",
+            "name": "1-Trade Mutex & Breadth Gate",
+            "status": "ENGAGED" if (active_trade and active_trade.get("status") == "OPEN") else "ARMED",
+            "severity": "OK",
+            "live_value": f"{'1 OPEN' if (active_trade and active_trade.get('status') == 'OPEN') else '0 OPEN (FLAT)'} • {regime.split(' ')[0]}",
+            "threshold": "Max 1 Open Trade • Breadth 30–70%",
+            "detail": regime
+        }
+    ]
+
+    # Per-stock circuit proximity (distance from NSE ±20% price band)
+    md_map = ds.get("market_data", {})
+    circuit_health = []
+    for sym in ["RELIANCE", "HDFCBANK", "ICICIBANK", "SBIN", "TCS", "INFY", "BAJFINANCE", "AXISBANK", "KOTAKBANK"]:
+        q = md_map.get(sym, {})
+        ltp_v = float(q.get("ltp", 0.0))
+        open_v = float(q.get("open", ltp_v))
+        chg_p = ((ltp_v - open_v) / open_v * 100.0) if open_v > 0 else 0.0
+        dist_lc_pct = round(max(0.0, 20.0 + chg_p), 2)
+        dist_uc_pct = round(max(0.0, 20.0 - chg_p), 2)
+        circuit_health.append({
+            "symbol": sym,
+            "ltp": round(ltp_v, 2),
+            "day_chg_pct": round(chg_p, 2),
+            "dist_to_lower_circuit_pct": dist_lc_pct,
+            "dist_to_upper_circuit_pct": dist_uc_pct,
+            "status": "CRITICAL" if min(dist_lc_pct, dist_uc_pct) < 5.0 else "SAFE"
+        })
+
+    tripped_count = sum(1 for b in breakers if b["status"] == "TRIPPED")
+    locked_count = sum(1 for b in breakers if "LOCK" in b["status"] or b["status"] == "ENGAGED")
+    overall_status = "HALTED (BREAKER TRIPPED)" if tripped_count > 0 else ("INTERLOCK STANDBY" if locked_count > 0 else "ALL SYSTEMS ARMED")
+
+    return {
+        "status": "SUCCESS",
+        "overall_breaker_status": overall_status,
+        "tripped_count": tripped_count,
+        "live_max_drawdown": {
+            "drawdown_rs": max_dd_rs,
+            "drawdown_pct": max_dd_pct,
+            "peak_equity_rs": round(clear_cash + peak_pnl, 2),
+            "current_equity_rs": round(clear_cash + current_day_pnl, 2),
+            "session_label": "LIVE" if is_open_mkt else ledger.get("date", "2026-11-09")
+        },
+        "risk_per_trade": {
+            "risk_rs": risk_per_trade_rs,
+            "risk_pct": risk_pct,
+            "active_trade_risk_rs": active_risk_rs,
+            "max_1r_cap_pct": risk_pct
+        },
+        "available_margin": {
+            "clear_cash_rs": round(clear_cash, 2),
+            "available_margin_rs": round(available_margin, 2),
+            "mis_margin_used_rs": round(mis_used, 2),
+            "hard_reserve_floor_rs": hard_floor,
+            "deployable_margin_rs": deployable_margin
+        },
+        "daily_loss_limit": {
+            "limit_rs": daily_loss_limit_rs,
+            "limit_pct": daily_loss_limit_pct,
+            "used_rs": daily_loss_used_rs,
+            "remaining_rs": daily_loss_remaining_rs,
+            "consumed_pct": daily_loss_consumed_pct
+        },
+        "exposure_utilization": {
+            "max_notional_multiple": max_notional_mult,
+            "max_notional_cap_rs": max_notional_cap_rs,
+            "current_notional_rs": round(active_notional, 2),
+            "utilization_pct": utilization_pct,
+            "session_peak_notional_rs": round(peak_notional_session, 2),
+            "session_peak_utilization_pct": session_peak_util_pct
+        },
+        "circuit_breakers": breakers,
+        "constituent_circuit_proximity": circuit_health,
+        "equity_drawdown_series": eq_series
+    }
+
 @app.get("/api/logs")
 def get_logs():
     return state.get("logs", [])

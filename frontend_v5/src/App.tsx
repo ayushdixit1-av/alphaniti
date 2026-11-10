@@ -6,6 +6,7 @@ import {
   History,
   Search,
   Settings,
+  ShieldAlert,
   ShieldCheck,
   Wallet,
   KeyRound,
@@ -19,11 +20,13 @@ import {
   LiveEngineStatus,
   PremarketAnalysisResponse,
   PremarketMacroResponse,
+  RiskCommandResponse,
 } from './types/api';
 import { ExecutionWorkspace } from './components/cockpit/ExecutionWorkspace';
 import { ReplayWorkspace } from './components/workspaces/ReplayWorkspace';
 import { AIResearchWorkspace } from './components/workspaces/AIResearchWorkspace';
 import { AuditRiskWorkspace } from './components/workspaces/AuditRiskWorkspace';
+import { RiskCommandCenter } from './components/workspaces/RiskCommandCenter';
 import { TelemetryConsole } from './components/layout/TelemetryConsole';
 import { CommandPalette } from './components/layout/CommandPalette';
 
@@ -41,7 +44,7 @@ const ALL_SYMBOLS = [
   'BANKNIFTY',
 ];
 
-type WorkspaceId = 'execution' | 'replay' | 'ai' | 'audit';
+type WorkspaceId = 'execution' | 'replay' | 'ai' | 'risk' | 'audit';
 
 export function App() {
   const [workspace, setWorkspace] = useState<WorkspaceId>('execution');
@@ -58,6 +61,7 @@ export function App() {
   const [macro, setMacro] = useState<PremarketMacroResponse | null>(null);
   const [auditLedger, setAuditLedger] = useState<AuditLedgerResponse | null>(null);
   const [premarket, setPremarket] = useState<PremarketAnalysisResponse | null>(null);
+  const [riskCommand, setRiskCommand] = useState<RiskCommandResponse | null>(null);
 
   const [istClock, setIstClock] = useState<string>('--:--:-- IST');
   const [tokenSecondsLeft, setTokenSecondsLeft] = useState<number>(0);
@@ -110,13 +114,15 @@ export function App() {
   const fetchLiveFeeds = useCallback(async () => {
     if (document.hidden) return;
     try {
-      const [engRes, telRes, macRes] = await Promise.all([
+      const [engRes, telRes, macRes, riskRes] = await Promise.all([
         fetch('/api/live_engine_status').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/daemon_logs?limit=50').then((r) => (r.ok ? r.json() : null)),
         fetch('/api/premarket_macro').then((r) => (r.ok ? r.json() : null)),
+        fetch('/api/risk_command').then((r) => (r.ok ? r.json() : null)),
       ]);
       if (engRes) setEngineStatus(engRes);
       if (telRes) setTelemetry(telRes);
+      if (riskRes && riskRes.status === 'SUCCESS') setRiskCommand(riskRes);
       if (macRes) {
         setMacro(macRes);
         if (macRes.token_countdown?.seconds_remaining !== undefined) {
@@ -224,7 +230,8 @@ export function App() {
     { id: 'execution', short: 'Exec', label: 'Execution', icon: <Activity size={17} /> },
     { id: 'replay', short: 'Rply', label: 'Replay', icon: <History size={17} /> },
     { id: 'ai', short: 'AI', label: 'AI Research', icon: <Cpu size={17} /> },
-    { id: 'audit', short: 'Audit', label: 'Audit & Risk', icon: <ShieldCheck size={17} /> },
+    { id: 'risk', short: 'Risk', label: 'Risk Command', icon: <ShieldAlert size={17} /> },
+    { id: 'audit', short: 'Audit', label: 'Audit & Ledger', icon: <ShieldCheck size={17} /> },
   ];
 
   return (
@@ -265,11 +272,16 @@ export function App() {
             <strong>₹{Math.round(clearCash).toLocaleString('en-IN')}</strong>
           </div>
 
-          <div className="pill">
-            <ShieldCheck size={13} color="var(--text-muted)" />
+          <button
+            className="pill"
+            style={{ cursor: 'pointer', borderColor: workspace === 'risk' ? 'var(--accent-cyan)' : undefined }}
+            onClick={() => setWorkspace('risk')}
+            title="Open Dedicated Risk Command Center"
+          >
+            <ShieldAlert size={13} color={riskCommand?.tripped_count ? 'var(--accent-red)' : 'var(--accent-amber)'} />
             <span style={{ color: 'var(--text-muted)' }}>Risk Cap</span>
             <strong>₹{riskCap} (1.6%)</strong>
-          </div>
+          </button>
 
           <div className="pill pill-purple">
             <KeyRound size={13} color="var(--accent-purple)" />
@@ -373,6 +385,16 @@ export function App() {
             <AIResearchWorkspace
               premarket={premarket}
               macro={macro}
+              onInspectSymbol={(sym) => {
+                setSelectedSymbol(sym);
+                setWorkspace('execution');
+              }}
+            />
+          )}
+
+          {workspace === 'risk' && (
+            <RiskCommandCenter
+              riskData={riskCommand}
               onInspectSymbol={(sym) => {
                 setSelectedSymbol(sym);
                 setWorkspace('execution');

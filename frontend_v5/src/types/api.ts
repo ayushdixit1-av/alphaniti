@@ -270,3 +270,75 @@ export interface PremarketAnalysisResponse {
   top_pick: string;
   items: PremarketAnalysisItem[];
 }
+
+export interface CircuitBreakerItem {
+  id: string;
+  name: string;
+  status: string;
+  severity: 'OK' | 'WARN' | 'CRITICAL';
+  live_value: string;
+  threshold: string;
+  detail: string;
+}
+
+export interface ConstituentCircuitItem {
+  symbol: string;
+  ltp: number;
+  day_chg_pct: number;
+  dist_to_lower_circuit_pct: number;
+  dist_to_upper_circuit_pct: number;
+  status: string;
+}
+
+export interface EquityDrawdownPoint {
+  time: string;
+  symbol?: string;
+  equity: number;
+  cum_pnl: number;
+  drawdown_rs: number;
+  drawdown_pct: number;
+}
+
+export interface RiskCommandResponse {
+  status: string;
+  overall_breaker_status: string;
+  tripped_count: number;
+  live_max_drawdown: {
+    drawdown_rs: number;
+    drawdown_pct: number;
+    peak_equity_rs: number;
+    current_equity_rs: number;
+    session_label: string;
+  };
+  risk_per_trade: {
+    risk_rs: number;
+    risk_pct: number;
+    active_trade_risk_rs: number;
+    max_1r_cap_pct: number;
+  };
+  available_margin: {
+    clear_cash_rs: number;
+    available_margin_rs: number;
+    mis_margin_used_rs: number;
+    hard_reserve_floor_rs: number;
+    deployable_margin_rs: number;
+  };
+  daily_loss_limit: {
+    limit_rs: number;
+    limit_pct: number;
+    used_rs: number;
+    remaining_rs: number;
+    consumed_pct: number;
+  };
+  exposure_utilization: {
+    max_notional_multiple: number;
+    max_notional_cap_rs: number;
+    current_notional_rs: number;
+    utilization_pct: number;
+    session_peak_notional_rs: number;
+    session_peak_utilization_pct: number;
+  };
+  circuit_breakers: CircuitBreakerItem[];
+  constituent_circuit_proximity: ConstituentCircuitItem[];
+  equity_drawdown_series: EquityDrawdownPoint[];
+}
