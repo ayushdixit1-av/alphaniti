@@ -6,3 +6,5 @@ sample_data/
 
 deploy_alphaniti_vercel.py
 live_strategy_daemon.py
+frontend_v5/node_modules/
+frontend_v5/dist/
