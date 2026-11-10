@@ -283,20 +283,26 @@ class FlawlessGapDumpEngine:
             }
 
         # Step 3: Two-Mode Floor with Poisson Buffer + Stale-Chop Time-Decay Shield
+        fee_guard_dist = (actual_fee + self.poisson_buffer) / max(1, qty)
         if new_peak_r >= 0.50:
             # Concern 9: Dual sub-bar CVD persistence eliminates single-spike whale traps
             adversarial_flow = (cvd_delta > 0) if is_short else (cvd_delta < 0)
             is_confirmed_reversal = (bar_vol > 1.4 * avg_vol) and adversarial_flow and cvd_persistent
-            
+
+            # Only ratchet to full fee_guard_price once favorable excursion exceeds fee_guard_dist;
+            # otherwise lock conservative breakeven so floor never jumps above current market price!
+            safe_guard_dist = min(fee_guard_dist, max(0.0, (new_peak_r - 0.15) * risk_per_share))
+            safe_guard_price = round(entry_price + sign * safe_guard_dist, 2)
+
             if is_confirmed_reversal:
                 # Mode B: Confirmed institutional reversal -> Lock in 70% of peak gains
                 locked_r = max(0.48, new_peak_r * 0.70)
                 tight_floor = round(entry_price + sign * (locked_r * risk_per_share), 2)
-                candidate_floor = min(tight_floor, fee_guard_price) if is_short else max(tight_floor, fee_guard_price)
+                candidate_floor = min(tight_floor, safe_guard_price) if is_short else max(tight_floor, safe_guard_price)
                 mode = "MODE_B_PERSISTENT_CVD_HARVEST"
             else:
-                # Mode A: Brownian Noise -> Safe breathing room at fee_guard_price
-                candidate_floor = fee_guard_price
+                # Mode A: Brownian Noise -> Safe breathing room without inverting floor above spot
+                candidate_floor = safe_guard_price
                 mode = "MODE_A_POISSON_BUFFERED_FEE_GUARD"
                 
             if current_active_floor == stop_loss:

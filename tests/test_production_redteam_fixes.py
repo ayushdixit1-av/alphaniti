@@ -9,6 +9,7 @@ Pytest Verification for All 5 Red-Team Production Engineering Fixes:
 
 import json
 import sys
+import time
 import types
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -343,3 +344,104 @@ def test_gap5_unified_cost_model_and_multiday_1_5bps_slippage_audit():
 
     assert multiday_trades >= 1
     assert isinstance(multiday_net, float)
+
+
+def test_redteam_setup2_lunch_base_freeze_and_trigger(tmp_path):
+    """
+    Verify Setup 2 (Lunch Breakout Long) actually fires:
+      - lunch_bases is empty at init (no stale hardcoded Nov 9 bounds).
+      - Frozen pre-lunch consolidation range allows 11:30+ breakout execution.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    assert daemon.state["lunch_bases"] == {}
+
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["safety_guards"]["token_sentinel"]["valid"] = True
+    daemon.state["strategy"]["macro_regime"] = "STRONG_BULL_TREND (SHORTS LOCKED, LONGS ACTIVE)"
+    daemon.state["lunch_bases"]["HDFCBANK"] = {"base_high": 790.0, "base_low": 782.0}
+    daemon.state["market_data"]["HDFCBANK"] = {
+        "ltp": 791.5,
+        "open": 785.0,
+        "day_high": 791.5,
+        "day_low": 782.5,
+        "volume": 35000,
+        "l2_imbalance_pct": 25.0,
+        "l2_live_available": True,
+        "buy_depth": 18000,
+        "sell_depth": 10000,
+        "best_bid": 791.4,
+        "best_ask": 791.6,
+        "spread_bps": 2.5,
+        "last_quote_ts": time.time(),
+    }
+    now_lunch = datetime(2026, 11, 11, 11, 45, tzinfo=IST)
+    daemon.scan_for_setups(now_lunch)
+    assert daemon.state["active_trade"] is not None
+    assert daemon.state["active_trade"]["symbol"] == "HDFCBANK"
+    assert daemon.state["active_trade"]["direction"] == "LONG"
+
+
+def test_redteam_stale_quote_margin_r_multiple_and_mode_a_floor(tmp_path):
+    """
+    Verify:
+      - Stale quotes (>30s old) block scan_for_setups entries cleanly.
+      - MIS margin is locked while active_trade is open and released to 0.0 on close.
+      - Closed trades record r_multiple.
+      - Mode-A floor never inverts above current price when peak is right at 0.50R near fee boundary.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["safety_guards"]["token_sentinel"]["valid"] = True
+    daemon.state["strategy"]["macro_regime"] = "STRONG_BULL_TREND (SHORTS LOCKED, LONGS ACTIVE)"
+    daemon.state["lunch_bases"]["SBIN"] = {"base_high": 1000.0, "base_low": 988.0}
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1002.0,
+        "open": 995.0,
+        "day_high": 1002.5,
+        "day_low": 988.5,
+        "volume": 50000,
+        "l2_imbalance_pct": 30.0,
+        "l2_live_available": False,
+        "last_quote_ts": time.time() - 45.0,  # Stale >30s!
+    }
+    now_t = datetime(2026, 11, 11, 12, 0, tzinfo=IST)
+    daemon.scan_for_setups(now_t)
+    assert daemon.state["active_trade"] is None, "Stale quote must NOT trigger entry!"
+
+    # Refresh quote -> entry executes and locks MIS margin
+    daemon.state["market_data"]["SBIN"]["last_quote_ts"] = time.time()
+    daemon.scan_for_setups(now_t)
+    tr = daemon.state["active_trade"]
+    assert tr is not None
+    assert daemon.state["account"]["mis_margin_used"] > 0.0
+    assert daemon.state["account"]["available_margin"] < daemon.state["account"]["clear_cash"]
+
+    # Mode-A non-inversion check on boundary 0.50R peak (SBIN 1040 / 1034)
+    eng = FlawlessGapDumpEngine(capital=8382.07)
+    ev = eng.evaluate_bar(
+        entry_price=1040.0,
+        stop_loss=1034.0,
+        qty=12,
+        bar_open=1041.0,
+        bar_high=1043.1,
+        bar_low=1040.8,
+        bar_close=1042.8,
+        bar_vol=10000,
+        avg_vol=10000,
+        cvd_delta=500,
+        cvd_persistent=False,
+        current_active_floor=1034.0,
+        peak_favorable_r=0.0,
+        direction="LONG",
+    )
+    assert ev["action"] == "HOLD"
+    assert ev["active_floor"] <= 1042.8, f"Floor inverted above close price: {ev}"
+
+    # Close trade -> margin resets to 0.0 and r_multiple is recorded
+    daemon.state["market_data"]["SBIN"]["ltp"] = 987.0
+    daemon.state["market_data"]["SBIN"]["bar_low"] = 986.5
+    daemon.manage_active_trade(now_t + timedelta(minutes=2))
+    assert daemon.state["active_trade"] is None
+    assert daemon.state["account"]["mis_margin_used"] == 0.0
+    assert daemon.state["account"]["available_margin"] == daemon.state["account"]["clear_cash"]
+    assert "r_multiple" in daemon.state["trade_history"][-1]
