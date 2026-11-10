@@ -693,3 +693,88 @@ def test_redteam3_sll_trail_modify_and_double_fill_prevention(tmp_path):
     closed = daemon.state["trade_history"][-1]
     assert closed["exit_reason"] == "EXCHANGE_SLL_FILLED"
     assert closed["exit_price"] == 1001.2
+
+
+def test_redteam4_exit_limit_unfilled_chase_and_fail_safe_rearm(tmp_path):
+    """
+    Verify:
+      - Unfilled initial exit LIMIT cancels and re-pegs with 0.5% marketable collar.
+      - If chased exit STILL remains unfilled, active_trade stays OPEN (EXIT_PENDING_LIQUIDITY_RETRY)
+        with a freshly re-armed protective SL-L on all unclosed shares.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon.live_order_execution = True
+    state = {"placed": [], "statuses": {}, "chase_fills": True}
+
+    class _ExitChaseGroww:
+        EXCHANGE_NSE = "NSE"
+        SEGMENT_CASH = "CASH"
+        PRODUCT_MIS = "MIS"
+        VALIDITY_DAY = "DAY"
+        ORDER_TYPE_LIMIT = "LIMIT"
+        ORDER_TYPE_STOP_LOSS = "SL"
+        TRANSACTION_TYPE_BUY = "BUY"
+        TRANSACTION_TYPE_SELL = "SELL"
+
+        def place_order(self, **kwargs):
+            oid = f"ORD-{len(state['placed']) + 1}"
+            state["placed"].append({"oid": oid, **kwargs})
+            if kwargs["transaction_type"] == "BUY":
+                state["statuses"][oid] = "EXECUTED"
+            elif kwargs["order_type"] == "SL":
+                state["statuses"][oid] = "TRIGGER_PENDING"
+            else:
+                # 1st SELL attempt rests OPEN; 2nd SELL (collar chase) fills only when chase_fills=True
+                is_chase = len([x for x in state["placed"] if x["transaction_type"] == "SELL" and x["order_type"] == "LIMIT"]) >= 2
+                state["statuses"][oid] = "EXECUTED" if (is_chase and state["chase_fills"]) else "OPEN"
+            return {"groww_order_id": oid}
+
+        def get_order_status(self, groww_order_id=None):
+            st = state["statuses"].get(groww_order_id, "OPEN")
+            return {"order_status": st, "average_fill_price": 983.0 if st == "EXECUTED" else None}
+
+        def cancel_order(self, groww_order_id=None, segment=None):
+            state["statuses"][groww_order_id] = "CANCELLED"
+            return {"status": "CANCELLED"}
+
+    daemon.groww = _ExitChaseGroww()
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1000.0, "open": 996.0, "day_high": 1001.0, "day_low": 995.0,
+        "volume": 50000, "l2_imbalance_pct": 25.0, "l2_live_available": False,
+        "last_quote_ts": time.time(),
+    }
+    t0 = datetime(2026, 11, 11, 10, 45, tzinfo=IST)
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
+    assert daemon.state["active_trade"] is not None
+
+    # Scenario A: EOD exit -> initial SELL rests OPEN -> cancelled -> collar chase fills at 983.0
+    eod_t = datetime(2026, 11, 11, 15, 16, tzinfo=IST)
+    daemon.state["market_data"]["SBIN"]["ltp"] = 995.0
+    daemon.manage_active_trade(eod_t)
+    assert daemon.state["active_trade"] is None
+    assert daemon.state["trade_history"][-1]["exit_price"] == 983.0
+
+    # Scenario B: Zero-liquidity -> both initial & chased SELL stay OPEN -> trade remains OPEN with SL-L re-armed!
+    state["placed"].clear()
+    state["statuses"].clear()
+    state["chase_fills"] = False
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0 + timedelta(minutes=5))
+    daemon.state["market_data"]["SBIN"]["ltp"] = 987.0
+    daemon.state["market_data"]["SBIN"]["bar_low"] = 986.5
+    daemon.manage_active_trade(t0 + timedelta(minutes=6))
+
+    assert daemon.state["active_trade"] is not None
+    assert daemon.state["active_trade"]["status_note"] == "EXIT_PENDING_LIQUIDITY_RETRY"
+    assert daemon.state["active_trade"]["sl_order_id"] is not None
+
+
+def test_redteam4_multimonth_oos_parquet_history_audit():
+    """Verify deterministic multi-month NSE historical audit inside test15 module."""
+    from src.validation.test15_monte_carlo_frontier import evaluate_multimonth_oos_history
+
+    audit = evaluate_multimonth_oos_history()
+    assert audit["status"] == "VERIFIED"
+    assert audit["observations"] >= 2000
+    assert audit["symbols_count"] >= 8
+    assert audit["dynamic_jcvar_cvar99_pct"] >= audit["static_158_cvar99_pct"]

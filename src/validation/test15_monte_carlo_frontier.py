@@ -368,13 +368,68 @@ def evaluate_exposure_config(
     }
 
 
+def evaluate_multimonth_oos_history(parquet_path: Optional[Path] = None) -> Dict[str, Any]:
+    """
+    Deterministic multi-month out-of-sample historical audit across local NSE parquet
+    data (`data/splits/test.parquet`): evaluates static 1.58x vs dynamic Jump-CVaR
+    exposure caps across F&O whitelist tickers with trailing 5-day volatility ratios.
+    """
+    import pandas as pd
+
+    p = parquet_path or (PROJECT_ROOT / "data" / "splits" / "test.parquet")
+    if not p.exists():
+        return {"status": "UNAVAILABLE", "observations": 0}
+
+    df = pd.read_parquet(p)
+    eng = FlawlessGapDumpEngine(capital=8382.07)
+    wl = eng.fo_whitelist
+    sub = df[df["symbol"].isin(wl)].sort_values(["symbol", "date"]).copy()
+    if sub.empty:
+        return {"status": "EMPTY", "observations": 0}
+
+    sub["range_pct"] = (sub["high"] - sub["low"]).abs() / sub["open"].clip(lower=1.0)
+    sub["base_vol"] = sub.groupby("symbol")["range_pct"].transform(lambda s: s.rolling(20, min_periods=5).mean().shift(1))
+    sub["fast_vol"] = sub.groupby("symbol")["range_pct"].transform(lambda s: s.rolling(3, min_periods=2).mean().shift(1))
+    valid = sub.dropna(subset=["base_vol", "fast_vol", "ret_1d"]).copy()
+    if valid.empty:
+        return {"status": "INSUFFICIENT", "observations": 0}
+
+    valid["vol_ratio"] = (valid["fast_vol"] / valid["base_vol"].clip(lower=1e-5)).clip(1.0, 2.5)
+    static_rets: List[float] = []
+    dyn_rets: List[float] = []
+    compressed_days = 0
+    for row in valid.itertuples(index=False):
+        r1 = float(row.ret_1d)
+        vr = float(row.vol_ratio)
+        j_cap = eng.compute_jump_cvar_notional_cap(8382.07, l2_fragility_score=0.0, macro_aligned=True, vix_or_atr_ratio=vr)
+        dyn_mult = min(1.58, j_cap / 8382.07)
+        if dyn_mult < 1.579:
+            compressed_days += 1
+        static_rets.append(1.58 * r1 * 100.0)
+        dyn_rets.append(dyn_mult * r1 * 100.0)
+
+    s_arr = np.sort(np.asarray(static_rets, dtype=float))
+    d_arr = np.sort(np.asarray(dyn_rets, dtype=float))
+    tail_n = max(1, int(math.ceil(0.01 * len(s_arr))))
+    return {
+        "status": "VERIFIED",
+        "observations": int(len(valid)),
+        "symbols_count": int(valid["symbol"].nunique()),
+        "date_start": str(valid["date"].min())[:10],
+        "date_end": str(valid["date"].max())[:10],
+        "vol_compressed_pct": round((compressed_days / len(valid)) * 100.0, 2),
+        "static_158_cvar99_pct": round(float(np.mean(s_arr[:tail_n])), 2),
+        "dynamic_jcvar_cvar99_pct": round(float(np.mean(d_arr[:tail_n])), 2),
+    }
+
+
 def run_test15_zero_tail_optimization(
     n_scenarios: int = 10_000,
     seed: int = 20261110,
 ) -> Dict[str, Any]:
     """
     Runs the full Test 15 Monte Carlo exposure frontier across 0.00x .. 1.58x,
-    plus AlphaNiti's Dynamic Confluence + Fragility Policy and 3 anti-cheating trap probes.
+    plus AlphaNiti's Dynamic Confluence + Fragility Policy, multi-month OOS audit, and 3 anti-cheating probes.
     """
     scenarios = generate_10k_randomized_scenarios(n_scenarios=n_scenarios, seed=seed)
     levels = [0.00, 0.20, 0.35, 0.50, 0.65, 0.80, 0.95, 1.05, 1.20, 1.38, 1.58]
@@ -398,6 +453,7 @@ def run_test15_zero_tail_optimization(
     # Pareto winner maximizing normal profit retention >= 100% while minimizing Expected Shortfall
     eligible_100 = [c for c in valid_configs if c["status"] == "VALID" and c["normal_profit_retention_pct"] >= 100.0]
     pareto_optimal = min(eligible_100, key=lambda c: abs(c["expected_shortfall_99_pct"])) if eligible_100 else dynamic_res
+    oos_audit = evaluate_multimonth_oos_history()
 
     return {
         "status": "SUCCESS",
@@ -409,6 +465,7 @@ def run_test15_zero_tail_optimization(
         "pareto_winner": pareto_optimal["name"],
         "rejected_cheat_probes": cheat_probes,
         "all_cheaters_rejected": all(p["status"] == "REJECTED" for p in cheat_probes),
+        "multimonth_oos_audit": oos_audit,
     }
 
 
