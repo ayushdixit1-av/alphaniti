@@ -1020,9 +1020,33 @@ def run_now():
         replay_offline_session("2026-11-03")
     return {"status": "SUCCESS", "active_trade": state.get("active_trade")}
 
+CANDLE_CACHE: Dict[str, Dict[str, Any]] = {}
+
 @app.get("/api/candles/{symbol}")
 def get_symbol_candles(symbol: str):
     symbol = symbol.upper().replace(".NS", "")
+    now_ts = time.time()
+    try:
+        from live_strategy_daemon import daemon
+        is_open_now = bool(daemon and daemon.state.get("market_status", {}).get("is_open", False))
+    except Exception:
+        daemon = None
+        is_open_now = False
+
+    cache_ttl = 10 if is_open_now else 300
+    cached = CANDLE_CACHE.get(symbol)
+    if cached and (now_ts - cached["ts"] < cache_ttl):
+        return cached["data"]
+
+    tz_ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
+    now_dt = datetime.datetime.now(tz_ist)
+    today_str = now_dt.strftime("%Y-%m-%d")
+
+    def _finish_and_cache(payload: Dict[str, Any]) -> Dict[str, Any]:
+        if payload.get("candles"):
+            CANDLE_CACHE[symbol] = {"ts": now_ts, "data": payload}
+        return payload
+
     if symbol in ("NIFTY", "NIFTY50", "BANKNIFTY"):
         try:
             from openview_api import get_chart_history
@@ -1030,10 +1054,8 @@ def get_symbol_candles(symbol: str):
             ov_res = get_chart_history(symbol=ov_sym, interval="5m", period="5d")
             raw = ov_res.get("candles", [])
             if raw:
-                tz_ist = datetime.timezone(datetime.timedelta(hours=5, minutes=30))
                 last_dt = datetime.datetime.fromtimestamp(raw[-1]["timestamp"] if "timestamp" in raw[-1] else raw[-1]["time"], tz=tz_ist)
                 last_date = last_dt.strftime("%Y-%m-%d")
-                today_str = datetime.datetime.now(tz_ist).strftime("%Y-%m-%d")
                 formatted = []
                 for c in raw:
                     ts = int(c["time"])
@@ -1048,66 +1070,110 @@ def get_symbol_candles(symbol: str):
                             "close": float(c["close"]),
                             "volume": int(c.get("volume", 0))
                         })
-                return {
+                return _finish_and_cache({
                     "status": "SUCCESS",
                     "symbol": symbol,
                     "session_date": last_date,
                     "is_live_today": (last_date == today_str),
                     "count": len(formatted),
                     "candles": formatted
-                }
+                })
         except Exception:
             pass
     try:
-        from live_strategy_daemon import daemon
         from growwapi import GrowwAPI
         if daemon and daemon.groww:
-            now_dt = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+            start_5d = (now_dt - datetime.timedelta(days=5)).strftime("%Y-%m-%d")
             candles = []
             active_date_str = None
             is_live_today = False
 
-            # Query today first; if empty (holiday/weekend/pre-open), walk backward up to 5 days
-            for days_back in range(5):
-                check_dt = now_dt - datetime.timedelta(days=days_back)
-                d_str = check_dt.strftime("%Y-%m-%d")
-                try:
-                    res = daemon.groww.get_historical_candle_data(
-                        trading_symbol=symbol,
-                        exchange=GrowwAPI.EXCHANGE_NSE,
-                        segment=GrowwAPI.SEGMENT_CASH,
-                        start_time=f"{d_str} 09:15:00",
-                        end_time=f"{d_str} 15:30:00",
-                        interval_in_minutes=5
-                    )
-                    c_list = res.get("candles", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
-                    if c_list and len(c_list) > 0:
-                        active_date_str = d_str
-                        is_live_today = (days_back == 0)
-                        for c in c_list:
-                            ts = int(c[0])
-                            t_str = datetime.datetime.fromtimestamp(ts, tz=datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime("%H:%M")
-                            candles.append({
-                                "time": t_str,
-                                "timestamp": ts,
-                                "open": float(c[1]),
-                                "high": float(c[2]),
-                                "low": float(c[3]),
-                                "close": float(c[4]),
-                                "volume": int(c[5])
-                            })
-                        break
-                except Exception:
-                    continue
+            try:
+                res = daemon.groww.get_historical_candle_data(
+                    trading_symbol=symbol,
+                    exchange=GrowwAPI.EXCHANGE_NSE,
+                    segment=GrowwAPI.SEGMENT_CASH,
+                    start_time=f"{start_5d} 09:15:00",
+                    end_time=f"{today_str} 15:30:00",
+                    interval_in_minutes=5
+                )
+                c_list = res.get("candles", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+                if c_list:
+                    parsed = []
+                    for c in c_list:
+                        ts = int(c[0])
+                        dt_c = datetime.datetime.fromtimestamp(ts, tz=tz_ist)
+                        parsed.append({
+                            "date": dt_c.strftime("%Y-%m-%d"),
+                            "time": dt_c.strftime("%H:%M"),
+                            "timestamp": ts,
+                            "open": float(c[1]),
+                            "high": float(c[2]),
+                            "low": float(c[3]),
+                            "close": float(c[4]),
+                            "volume": int(c[5])
+                        })
+                    # Prefer latest date with substantial session bars (>= 15 bars) or latest date overall
+                    date_counts: Dict[str, int] = {}
+                    for p in parsed:
+                        date_counts[p["date"]] = date_counts.get(p["date"], 0) + 1
+                    substantial_dates = [d for d, cnt in date_counts.items() if cnt >= 15]
+                    latest_date = max(substantial_dates) if substantial_dates else max(date_counts.keys())
 
-            return {
+                    session_bars = sorted(
+                        [p for p in parsed if p["date"] == latest_date],
+                        key=lambda x: x["timestamp"]
+                    )
+                    if session_bars:
+                        active_date_str = latest_date
+                        is_live_today = (latest_date == today_str)
+                        if len(session_bars) >= 5:
+                            mono_inc = sum(
+                                1 for i in range(1, len(session_bars))
+                                if session_bars[i]["volume"] >= session_bars[i - 1]["volume"]
+                            )
+                            if mono_inc >= int(0.85 * (len(session_bars) - 1)) and session_bars[-1]["volume"] > session_bars[0]["volume"] * 1.5:
+                                raw_v = [b["volume"] for b in session_bars]
+                                for i in range(1, len(session_bars)):
+                                    session_bars[i]["volume"] = max(0, raw_v[i] - raw_v[i - 1])
+                        candles = [{k: v for k, v in b.items() if k != "date"} for b in session_bars]
+            except Exception:
+                pass
+
+            if not candles:
+                # Smooth fallback to yfinance 5m session if Groww historical throttles
+                try:
+                    from openview_api import get_chart_history
+                    ov_res = get_chart_history(symbol=symbol, interval="5m", period="5d")
+                    raw = ov_res.get("candles", [])
+                    if raw:
+                        last_date = datetime.datetime.fromtimestamp(int(raw[-1]["time"]), tz=tz_ist).strftime("%Y-%m-%d")
+                        for c in raw:
+                            ts = int(c["time"])
+                            dt_c = datetime.datetime.fromtimestamp(ts, tz=tz_ist)
+                            if dt_c.strftime("%Y-%m-%d") == last_date:
+                                candles.append({
+                                    "time": dt_c.strftime("%H:%M"),
+                                    "timestamp": ts,
+                                    "open": float(c["open"]),
+                                    "high": float(c["high"]),
+                                    "low": float(c["low"]),
+                                    "close": float(c["close"]),
+                                    "volume": int(c.get("volume", 0))
+                                })
+                        active_date_str = last_date
+                        is_live_today = (last_date == today_str)
+                except Exception:
+                    pass
+
+            return _finish_and_cache({
                 "status": "SUCCESS",
                 "symbol": symbol,
                 "session_date": active_date_str or "2026-11-09",
                 "is_live_today": is_live_today,
                 "count": len(candles),
                 "candles": candles
-            }
+            })
         else:
             return {"status": "STANDBY", "symbol": symbol, "candles": []}
     except Exception as e:
@@ -1249,6 +1315,7 @@ COMPANY_NAMES = {
 }
 
 ENSEMBLE_MEMBER_CACHE: Dict[str, Dict[str, Any]] = {}
+AVG_VOL_CACHE: Dict[str, Dict[str, Any]] = {}
 
 @app.get("/api/cockpit_symbol/{symbol}")
 def get_cockpit_symbol(symbol: str):
@@ -1314,12 +1381,15 @@ def get_cockpit_symbol(symbol: str):
                 hist = yf.download(f"{sym}.NS", period="6mo", interval="1d", progress=False)
                 if not hist.empty:
                     rows = []
+                    v_list_daily = []
                     for dt, r in hist.iterrows():
                         c_v = float(r["Close"].iloc[0] if isinstance(r["Close"], pd.Series) else r["Close"])
                         o_v = float(r["Open"].iloc[0] if isinstance(r["Open"], pd.Series) else r["Open"])
                         h_v = float(r["High"].iloc[0] if isinstance(r["High"], pd.Series) else r["High"])
                         l_v = float(r["Low"].iloc[0] if isinstance(r["Low"], pd.Series) else r["Low"])
                         v_v = float(r["Volume"].iloc[0] if isinstance(r["Volume"], pd.Series) else r["Volume"])
+                        if v_v > 0:
+                            v_list_daily.append(v_v)
                         rows.append({
                             "symbol": sym, "date": dt.strftime("%Y-%m-%d"),
                             "open": o_v, "high": h_v, "low": l_v, "close": c_v,
@@ -1329,6 +1399,11 @@ def get_cockpit_symbol(symbol: str):
                             "target_ret_20d_net": 0.0, "target_breach_5pct": 0,
                             "has_corporate_action": 0, "ca_kind": "NONE"
                         })
+                    if v_list_daily:
+                        AVG_VOL_CACHE[sym] = {
+                            "ts": now_ts,
+                            "avg_5d_vol": float(np.mean(v_list_daily[-5:]))
+                        }
                     df_all = pd.DataFrame(rows).sort_values("date").reset_index(drop=True)
                     pl_df = pl.from_pandas(df_all)
                     df_feat, _ = compute_causal_features(pl_df)
@@ -1522,6 +1597,124 @@ def get_cockpit_symbol(symbol: str):
             "base_low": round(min(c["low"] for c in mid_slice), 2)
         }
 
+    # 6. Market Microstructure (Strict per-metric reliability gating)
+    is_open_mkt = bool(market_status.get("is_open", False))
+    candle_vol_sum = sum(int(c.get("volume", 0)) for c in candles)
+    session_vol = int(md.get("volume") or candle_vol_sum or 0)
+
+    # Fetch / use cached 5-day average daily volume for true RVOL
+    avg_vol_entry = AVG_VOL_CACHE.get(sym)
+    avg_5d_vol = 0.0
+    if sym not in ("NIFTY", "BANKNIFTY"):
+        if avg_vol_entry and (now_ts - avg_vol_entry["ts"] < 300):
+            avg_5d_vol = float(avg_vol_entry["avg_5d_vol"])
+        else:
+            try:
+                vh = yf.download(f"{sym}.NS", period="10d", interval="1d", progress=False)
+                if not vh.empty:
+                    vs_col = vh["Volume"].iloc[:, 0] if isinstance(vh["Volume"], pd.DataFrame) else vh["Volume"]
+                    vals = [float(x) for x in vs_col.dropna().tolist() if float(x) > 0]
+                    if vals:
+                        avg_5d_vol = float(np.mean(vals[-5:]))
+                        AVG_VOL_CACHE[sym] = {"ts": now_ts, "avg_5d_vol": avg_5d_vol}
+            except Exception:
+                pass
+
+    rvol_reliable = bool(sym not in ("NIFTY", "BANKNIFTY") and session_vol > 0 and avg_5d_vol > 0)
+    true_rvol = None
+    if rvol_reliable:
+        if is_open_mkt:
+            now_ist_dt = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30)))
+            elapsed_mins = max(15, (now_ist_dt.hour * 60 + now_ist_dt.minute) - 555)
+            elapsed_frac = min(1.0, max(0.05, elapsed_mins / 375.0))
+            true_rvol = round(session_vol / (avg_5d_vol * elapsed_frac), 2)
+        else:
+            true_rvol = round(session_vol / avg_5d_vol, 2)
+
+    # Volume Delta from empirical intraday 5m OHLCV flow
+    volume_delta_reliable = bool(sym not in ("NIFTY", "BANKNIFTY") and len(candles) >= 10 and candle_vol_sum > 0)
+    cum_delta = 0.0
+    recent_5_delta = 0.0
+    buy_vol_est = 0.0
+    sell_vol_est = 0.0
+    if volume_delta_reliable:
+        for i_c, c_bar in enumerate(candles):
+            c_v = float(c_bar.get("volume", 0))
+            rng = float(c_bar["high"]) - float(c_bar["low"])
+            if rng > 0:
+                flow_ratio = ((float(c_bar["close"]) - float(c_bar["low"])) - (float(c_bar["high"]) - float(c_bar["close"]))) / rng
+            else:
+                flow_ratio = 1.0 if float(c_bar["close"]) >= float(c_bar["open"]) else -1.0
+            d_bar = c_v * flow_ratio
+            cum_delta += d_bar
+            buy_vol_est += c_v * (0.5 + 0.5 * flow_ratio)
+            sell_vol_est += c_v * (0.5 - 0.5 * flow_ratio)
+            if i_c >= len(candles) - 5:
+                recent_5_delta += d_bar
+
+    delta_pct = round((cum_delta / candle_vol_sum) * 100.0, 2) if (volume_delta_reliable and candle_vol_sum > 0) else None
+
+    # Order book & Bid/Ask imbalance strictly gated by live market + non-empty two-sided L2 quotes
+    imbalance_reliable = bool(is_open_mkt and md.get("imbalance_reliable", False))
+    depth_reliable = bool(is_open_mkt and md.get("l2_live_available", False))
+    spread_bps = md.get("spread_bps")
+    spread_reliable = bool(is_open_mkt and spread_bps is not None)
+
+    liquidity_reliable = bool(sym not in ("NIFTY", "BANKNIFTY") and session_vol > 0 and ltp > 0)
+    turnover_cr = round((session_vol * ltp) / 1e7, 2) if liquidity_reliable else None
+    if liquidity_reliable and turnover_cr is not None:
+        if turnover_cr >= 250.0:
+            liq_tier = "INSTITUTIONAL_DEEP"
+        elif turnover_cr >= 75.0:
+            liq_tier = "HIGH_LIQUID"
+        else:
+            liq_tier = "MODERATE_THIN"
+    else:
+        liq_tier = None
+
+    microstructure = {
+        "has_any_reliable": bool(imbalance_reliable or depth_reliable or volume_delta_reliable or rvol_reliable or liquidity_reliable),
+        "imbalance_reliable": imbalance_reliable,
+        "depth_reliable": depth_reliable,
+        "volume_delta_reliable": volume_delta_reliable,
+        "rvol_reliable": rvol_reliable,
+        "liquidity_reliable": liquidity_reliable,
+        "spread_reliable": spread_reliable,
+        "bid_ask_imbalance": {
+            "imbalance_pct": md.get("l2_imbalance_pct"),
+            "buy_qty": md.get("buy_depth"),
+            "sell_qty": md.get("sell_depth")
+        } if imbalance_reliable else None,
+        "order_book_depth": {
+            "bid_levels": md.get("bid_levels", []),
+            "ask_levels": md.get("ask_levels", []),
+            "total_bid_qty": md.get("buy_depth", 0),
+            "total_ask_qty": md.get("sell_depth", 0),
+            "best_bid": md.get("best_bid"),
+            "best_ask": md.get("best_ask")
+        } if depth_reliable else None,
+        "volume_delta": {
+            "cumulative_delta": int(round(cum_delta)),
+            "delta_pct": delta_pct,
+            "recent_5bar_delta": int(round(recent_5_delta)),
+            "buy_volume_est": int(round(buy_vol_est)),
+            "sell_volume_est": int(round(sell_vol_est)),
+            "total_volume": int(candle_vol_sum)
+        } if volume_delta_reliable else None,
+        "relative_volume": {
+            "rvol": true_rvol,
+            "session_volume": session_vol,
+            "avg_5d_volume": int(round(avg_5d_vol)),
+            "regime": "SURGE (>=1.5x)" if (true_rvol or 0) >= 1.5 else ("ACTIVE (>=0.9x)" if (true_rvol or 0) >= 0.9 else "SUBDUED (<0.9x)")
+        } if rvol_reliable else None,
+        "liquidity_conditions": {
+            "turnover_cr": turnover_cr,
+            "tier": liq_tier,
+            "spread_bps": spread_bps if spread_reliable else None,
+            "volume": session_vol
+        } if liquidity_reliable else None
+    }
+
     return {
         "status": "SUCCESS",
         "symbol": sym,
@@ -1534,7 +1727,7 @@ def get_cockpit_symbol(symbol: str):
         "change_pct": chg_pct,
         "vwap": round(vwap, 2),
         "rsi_14": round(rsi_14, 1),
-        "rvol": round(rvol, 2),
+        "rvol": true_rvol if rvol_reliable else None,
         "atr_15m": round(atr_15m, 2),
         "last_trade_time": md.get("last_trade_time", candle_resp.get("session_date", "--")),
         "ai_metrics": ens_data,
@@ -1556,7 +1749,8 @@ def get_cockpit_symbol(symbol: str):
             "risk_per_trade_rs": round(clear_cash * 0.016, 2)
         },
         "dalton_base": lunch_base,
-        "volume_profile": vp_data
+        "volume_profile": vp_data,
+        "microstructure": microstructure
     }
 
 @app.get("/api/risk_command")

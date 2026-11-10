@@ -9,6 +9,7 @@ import {
 } from '../../types/api';
 import { SuperChart } from '../charts/SuperChart';
 import { EquityCurveMini } from '../charts/EquityCurveMini';
+import { MarketMicrostructurePanel } from './MarketMicrostructurePanel';
 
 const EQUITY_SYMBOLS = [
   'SBIN',
@@ -448,6 +449,9 @@ export const ExecutionWorkspace: React.FC<ExecutionWorkspaceProps> = ({
         </div>
       </div>
 
+      {/* Market Microstructure (Only rendered when backend confirms reliable data) */}
+      <MarketMicrostructurePanel symbol={selectedSymbol} micro={cockpit?.microstructure} />
+
       {/* ROW 2: 4 Analytical Cards */}
       <div className="cockpit-row2">
         {/* Card 1: Account & Risk */}
@@ -499,7 +503,7 @@ export const ExecutionWorkspace: React.FC<ExecutionWorkspaceProps> = ({
           <div className="panel-head">
             <span>Factor Scores ({selectedSymbol})</span>
             <span className="mono" style={{ fontSize: 10, color: 'var(--text-dim)' }}>
-              RSI {cockpit?.rsi_14 ?? '--'} • RVOL {cockpit?.rvol ?? '--'}x
+              RSI {cockpit?.rsi_14 ?? '--'}{cockpit?.rvol != null ? ` • RVOL ${cockpit.rvol}x` : ''}
             </span>
           </div>
           <div style={{ padding: '9px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>

@@ -106,6 +106,55 @@ export interface VolumeProfileNode {
   is_value_area: boolean;
 }
 
+export interface OrderBookLevel {
+  price: number;
+  quantity: number;
+  orders: number;
+}
+
+export interface MicrostructureData {
+  has_any_reliable: boolean;
+  imbalance_reliable: boolean;
+  depth_reliable: boolean;
+  volume_delta_reliable: boolean;
+  rvol_reliable: boolean;
+  liquidity_reliable: boolean;
+  spread_reliable: boolean;
+  bid_ask_imbalance: {
+    imbalance_pct: number;
+    buy_qty: number;
+    sell_qty: number;
+  } | null;
+  order_book_depth: {
+    bid_levels: OrderBookLevel[];
+    ask_levels: OrderBookLevel[];
+    total_bid_qty: number;
+    total_ask_qty: number;
+    best_bid: number | null;
+    best_ask: number | null;
+  } | null;
+  volume_delta: {
+    cumulative_delta: number;
+    delta_pct: number;
+    recent_5bar_delta: number;
+    buy_volume_est: number;
+    sell_volume_est: number;
+    total_volume: number;
+  } | null;
+  relative_volume: {
+    rvol: number;
+    session_volume: number;
+    avg_5d_volume: number;
+    regime: string;
+  } | null;
+  liquidity_conditions: {
+    turnover_cr: number;
+    tier: string;
+    spread_bps: number | null;
+    volume: number;
+  } | null;
+}
+
 export interface CockpitSymbolData {
   status: string;
   symbol: string;
@@ -118,9 +167,10 @@ export interface CockpitSymbolData {
   change_pct: number;
   vwap: number;
   rsi_14: number;
-  rvol: number;
+  rvol: number | null;
   atr_15m: number;
   last_trade_time: string;
+  microstructure?: MicrostructureData | null;
   ai_metrics: {
     drift_20d_pct: number;
     volatility_pct: number;
