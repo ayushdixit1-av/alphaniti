@@ -285,6 +285,36 @@ export interface AuditTrade {
   r_multiple: number;
 }
 
+export interface PerformanceAnalytics {
+  starting_capital_rs: number;
+  ending_capital_rs: number;
+  total_trades: number;
+  wins: number;
+  losses: number;
+  win_rate_pct: number;
+  profit_factor: number | null;
+  expectancy_rs: number;
+  expectancy_r: number;
+  avg_win_rs: number;
+  avg_loss_rs: number;
+  payoff_ratio: number | null;
+  max_drawdown_rs: number;
+  max_drawdown_pct: number;
+  gross_pnl_rs: number;
+  statutory_charges_rs: number;
+  net_pnl_after_charges_rs: number;
+  return_pct: number;
+  equity_curve: Array<{
+    time: string;
+    symbol: string;
+    trade_net: number;
+    cum_net: number;
+    equity: number;
+    drawdown_rs: number;
+    drawdown_pct: number;
+  }>;
+}
+
 export interface AuditLedgerResponse {
   date?: string;
   trades: AuditTrade[];
@@ -299,6 +329,7 @@ export interface AuditLedgerResponse {
     return_pct: number;
   };
   comparative_matrix?: Record<string, { trades: number; net_pnl_rs: number; ending_balance: number; assessment: string }>;
+  performance_analytics?: PerformanceAnalytics;
 }
 
 export interface PremarketAnalysisItem {

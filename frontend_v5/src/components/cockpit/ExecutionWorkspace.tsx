@@ -55,34 +55,42 @@ export const ExecutionWorkspace: React.FC<ExecutionWorkspaceProps> = ({
   onRefreshSymbol,
 }) => {
   const trades = auditLedger?.trades || [];
+  const perf = auditLedger?.performance_analytics;
   const summary = auditLedger?.summary;
   const clearCash = engineStatus?.account?.clear_cash ?? 8382.07;
   const riskCap = Number((clearCash * 0.016).toFixed(2));
   const openPosCount = engineStatus?.active_trade?.status === 'OPEN' ? 1 : 0;
 
-  // Build cumulative PnL points & Max Drawdown from real trades
+  // Use backend performance_analytics with safe local fallback
   let cum = 0;
   let peak = 0;
-  let maxDD = 0;
-  const eqPoints = [...trades]
-    .sort((a, b) => a.exit_time.localeCompare(b.exit_time))
-    .map((t) => {
-      cum = Number((cum + t.net_pnl).toFixed(2));
-      if (cum > peak) peak = cum;
-      const dd = cum - peak;
-      if (dd < maxDD) maxDD = dd;
-      return { label: t.exit_time, cumPnl: cum };
-    });
+  let maxDDLocal = 0;
+  const sortedTrades = [...trades].sort((a, b) => a.exit_time.localeCompare(b.exit_time));
+  const eqPoints = perf?.equity_curve
+    ? perf.equity_curve.map((pt) => ({ label: pt.time, symbol: pt.symbol, tradeNet: pt.trade_net, cumPnl: pt.cum_net }))
+    : sortedTrades.map((t) => {
+        cum = Number((cum + t.net_pnl).toFixed(2));
+        if (cum > peak) peak = cum;
+        const dd = cum - peak;
+        if (dd < maxDDLocal) maxDDLocal = dd;
+        return { label: t.exit_time, symbol: t.symbol, tradeNet: t.net_pnl, cumPnl: cum };
+      });
 
   const realizedPnl =
     engineStatus?.market_status?.is_open && (engineStatus?.today_net_pnl ?? 0) !== 0
       ? engineStatus.today_net_pnl
-      : summary?.total_net_pnl_rs ?? cum;
-  const wins = summary?.wins ?? trades.filter((t) => t.net_pnl > 0).length;
-  const totalTr = summary?.total_trades ?? trades.length;
-  const winRatePct = totalTr > 0 ? Math.round((wins / totalTr) * 100) : 0;
-  const realizedPct = clearCash > 0 ? (realizedPnl / clearCash) * 100 : 0;
-  const maxDDPct = clearCash > 0 ? (maxDD / clearCash) * 100 : 0;
+      : perf?.net_pnl_after_charges_rs ?? summary?.total_net_pnl_rs ?? cum;
+  const wins = perf?.wins ?? summary?.wins ?? trades.filter((t) => t.net_pnl > 0).length;
+  const totalTr = perf?.total_trades ?? summary?.total_trades ?? trades.length;
+  const winRatePct = perf?.win_rate_pct ?? (totalTr > 0 ? Number(((wins / totalTr) * 100).toFixed(1)) : 0);
+  const realizedPct = perf?.return_pct ?? (clearCash > 0 ? (realizedPnl / clearCash) * 100 : 0);
+  const maxDD = perf?.max_drawdown_rs ?? maxDDLocal;
+  const maxDDPct = perf?.max_drawdown_pct ?? (clearCash > 0 ? (maxDD / clearCash) * 100 : 0);
+  const profitFactor = perf?.profit_factor;
+  const expectancyRs = perf?.expectancy_rs ?? (totalTr > 0 ? realizedPnl / totalTr : 0);
+  const avgWinRs = perf?.avg_win_rs ?? 0;
+  const avgLossRs = perf?.avg_loss_rs ?? 0;
+  const statutoryFees = perf?.statutory_charges_rs ?? trades.reduce((acc, t) => acc + t.fees, 0);
 
   // Watchlist rows: 9 equities + NIFTY + BANKNIFTY
   const watchlistRows = [
@@ -587,29 +595,33 @@ export const ExecutionWorkspace: React.FC<ExecutionWorkspaceProps> = ({
           <div className="panel-head">
             <span>Day Performance</span>
             <span className="mono" style={{ fontSize: 11 }}>
-              PnL (Day){' '}
+              Net{' '}
               <strong style={{ color: realizedPnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
                 {realizedPnl >= 0 ? '+' : ''}₹{realizedPnl.toFixed(2)} ({realizedPct >= 0 ? '+' : ''}
                 {realizedPct.toFixed(2)}%)
               </strong>
             </span>
           </div>
-          <div style={{ padding: '6px 10px 8px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+          <div style={{ padding: '4px 10px 8px', flex: 1, display: 'flex', flexDirection: 'column', justifyContent: 'space-between', gap: 6 }}>
             <EquityCurveMini points={eqPoints} />
             <div
               className="mono"
               style={{
-                display: 'flex',
-                justifyContent: 'space-between',
-                fontSize: 10,
+                display: 'grid',
+                gridTemplateColumns: 'repeat(3, 1fr)',
+                gap: '4px 8px',
+                fontSize: 9.8,
                 color: 'var(--text-dim)',
-                borderTop: '1px solid rgba(148,163,184,0.08)',
-                paddingTop: 4,
+                borderTop: '1px solid rgba(148,163,184,0.1)',
+                paddingTop: 5,
               }}
             >
-              <span>Trades: {totalTr}</span>
-              <span>Fees: ₹{macro?.eod_reconciliation?.statutory_friction_paid?.toFixed(2) ?? '--'}</span>
-              <span>3.5x Cap: ₹{Math.round(clearCash * 3.5).toLocaleString('en-IN')}</span>
+              <span>PF <strong style={{ color: 'var(--accent-green)' }}>{profitFactor != null ? `${profitFactor.toFixed(2)}x` : '--'}</strong></span>
+              <span>WR <strong style={{ color: 'var(--text-main)' }}>{winRatePct}%</strong></span>
+              <span>Exp <strong style={{ color: expectancyRs >= 0 ? 'var(--accent-cyan)' : 'var(--accent-red)' }}>{expectancyRs >= 0 ? '+' : ''}₹{expectancyRs.toFixed(1)}</strong></span>
+              <span>Avg W/L <strong style={{ color: 'var(--text-main)' }}>{avgWinRs.toFixed(0)}/{Math.abs(avgLossRs).toFixed(0)}</strong></span>
+              <span>DD <strong style={{ color: maxDD < 0 ? 'var(--accent-amber)' : 'var(--accent-green)' }}>{maxDDPct.toFixed(2)}%</strong></span>
+              <span>Charges <strong style={{ color: 'var(--accent-amber)' }}>₹{statutoryFees.toFixed(0)}</strong></span>
             </div>
           </div>
         </div>

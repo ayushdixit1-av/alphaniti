@@ -1186,13 +1186,98 @@ def get_audit_ledger():
         alt_path = Path("/root/alphaniti/todays_full_system_audit.json")
         if alt_path.exists():
             ledger_path = alt_path
+    data: Dict[str, Any] = {"status": "EMPTY", "trades": []}
     if ledger_path.exists():
         try:
             with open(ledger_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+                data = json.load(f)
         except Exception:
             pass
-    return {"status": "EMPTY", "trades": []}
+
+    # Merge live trades if market is open and daemon recorded intraday exits
+    try:
+        from live_strategy_daemon import daemon
+        ds = daemon.state if daemon else {}
+        if ds.get("market_status", {}).get("is_open") and ds.get("trade_history"):
+            data = {
+                "date": datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=5, minutes=30))).strftime("%Y-%m-%d"),
+                "trades": ds["trade_history"],
+                "summary": {"starting_capital": ds["account"]["clear_cash"]}
+            }
+    except Exception:
+        pass
+
+    trades = data.get("trades", [])
+    start_cap = float(data.get("summary", {}).get("starting_capital", 8382.07))
+    sorted_tr = sorted(trades, key=lambda t: str(t.get("exit_time", "")))
+
+    gross_sum = sum(float(t.get("gross_pnl", 0.0)) for t in sorted_tr)
+    fees_sum = sum(float(t.get("fees", 0.0)) for t in sorted_tr)
+    net_sum = sum(float(t.get("net_pnl", 0.0)) for t in sorted_tr)
+    win_vals = [float(t.get("net_pnl", 0.0)) for t in sorted_tr if float(t.get("net_pnl", 0.0)) > 0]
+    loss_vals = [float(t.get("net_pnl", 0.0)) for t in sorted_tr if float(t.get("net_pnl", 0.0)) < 0]
+    r_vals = [float(t.get("r_multiple", 0.0)) for t in sorted_tr]
+
+    wins_n = len(win_vals)
+    losses_n = len(loss_vals)
+    total_n = len(sorted_tr)
+    win_rate = round((wins_n / total_n) * 100.0, 1) if total_n > 0 else 0.0
+    avg_win = round(sum(win_vals) / wins_n, 2) if wins_n > 0 else 0.0
+    avg_loss = round(sum(loss_vals) / losses_n, 2) if losses_n > 0 else 0.0
+    gross_win = sum(win_vals)
+    gross_loss_abs = abs(sum(loss_vals))
+    profit_factor = round(gross_win / gross_loss_abs, 2) if gross_loss_abs > 0 else (None if wins_n == 0 else 99.99)
+    payoff_ratio = round(avg_win / abs(avg_loss), 2) if avg_loss < 0 else (None if wins_n == 0 else 99.99)
+    expectancy_rs = round(net_sum / total_n, 2) if total_n > 0 else 0.0
+    expectancy_r = round(sum(r_vals) / total_n, 2) if total_n > 0 else 0.0
+
+    cum_net = 0.0
+    peak_net = 0.0
+    max_dd_rs = 0.0
+    max_dd_pct = 0.0
+    eq_curve = [{"time": "09:15", "symbol": "START", "trade_net": 0.0, "cum_net": 0.0, "equity": round(start_cap, 2), "drawdown_rs": 0.0, "drawdown_pct": 0.0}]
+    for tr in sorted_tr:
+        t_net = float(tr.get("net_pnl", 0.0))
+        cum_net = round(cum_net + t_net, 2)
+        if cum_net > peak_net:
+            peak_net = cum_net
+        dd_rs = round(cum_net - peak_net, 2)
+        dd_pct = round((dd_rs / (start_cap + peak_net)) * 100.0, 2) if (start_cap + peak_net) > 0 else 0.0
+        if dd_rs < max_dd_rs:
+            max_dd_rs = dd_rs
+            max_dd_pct = dd_pct
+        eq_curve.append({
+            "time": str(tr.get("exit_time", "--")),
+            "symbol": str(tr.get("symbol", "")),
+            "trade_net": round(t_net, 2),
+            "cum_net": cum_net,
+            "equity": round(start_cap + cum_net, 2),
+            "drawdown_rs": dd_rs,
+            "drawdown_pct": dd_pct
+        })
+
+    data["performance_analytics"] = {
+        "starting_capital_rs": round(start_cap, 2),
+        "ending_capital_rs": round(start_cap + net_sum, 2),
+        "total_trades": total_n,
+        "wins": wins_n,
+        "losses": losses_n,
+        "win_rate_pct": win_rate,
+        "profit_factor": profit_factor,
+        "expectancy_rs": expectancy_rs,
+        "expectancy_r": expectancy_r,
+        "avg_win_rs": avg_win,
+        "avg_loss_rs": avg_loss,
+        "payoff_ratio": payoff_ratio,
+        "max_drawdown_rs": max_dd_rs,
+        "max_drawdown_pct": max_dd_pct,
+        "gross_pnl_rs": round(gross_sum, 2),
+        "statutory_charges_rs": round(fees_sum, 2),
+        "net_pnl_after_charges_rs": round(net_sum, 2),
+        "return_pct": round((net_sum / start_cap) * 100.0, 2) if start_cap > 0 else 0.0,
+        "equity_curve": eq_curve
+    }
+    return data
 
 @app.get("/api/daemon_logs")
 def get_daemon_logs(limit: int = 60):
