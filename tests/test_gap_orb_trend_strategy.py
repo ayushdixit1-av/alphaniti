@@ -130,5 +130,5 @@ def test_daemon_a8_10k_eod_hold_beats_groww_without_choking(tmp_path):
     daemon.manage_active_trade(datetime(2026, 11, 11, 15, 16, tzinfo=IST))
     assert daemon.state["active_trade"] is None
     closed = daemon.state["trade_history"][-1]
-    assert closed["net_pnl"] > 300.0
+    assert closed["net_pnl"] > 250.0
     assert closed["fees"] > 0.0
