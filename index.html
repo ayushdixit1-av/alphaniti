@@ -544,6 +544,31 @@
       cursor: pointer;
     }
 
+    .sim-readout-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 8px;
+    }
+    .sim-readout-item {
+      background: rgba(0, 0, 0, 0.3);
+      border: 1px solid var(--border-subtle);
+      border-radius: 6px;
+      padding: 6px 8px;
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+      font-family: var(--mono);
+    }
+    .sim-readout-label {
+      font-size: 9px;
+      color: var(--text-dim);
+      text-transform: uppercase;
+    }
+    .sim-readout-val {
+      font-size: 10.5px;
+      font-weight: 700;
+    }
+
     .scenario-comparison-table {
       width: 100%;
       border-collapse: collapse;
@@ -682,6 +707,9 @@
     </div>
 
     <div class="header-status-pills">
+      <div class="status-pill" id="top-exchange-pill" style="border-color: rgba(245, 158, 11, 0.3);">
+        <strong style="color: var(--accent-amber);" id="top-exchange-status">EXCHANGE STANDBY</strong>
+      </div>
       <div class="status-pill">
         <span class="pulse-dot"></span>
         <span>GATEWAY: <strong style="color: var(--accent-green);" id="top-gateway-status">DIRECT GROWW API</strong></span>
@@ -882,7 +910,9 @@
           <!-- Populated by JS -->
         </div>
 
-        <div class="chart-legend">
+        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+          <span class="version-badge" id="chart-session-badge" style="color: var(--accent-amber); background: rgba(245, 158, 11, 0.12); border-color: rgba(245, 158, 11, 0.3);">SESSION: LOADING...</span>
+          <div class="chart-legend">
           <div class="legend-item">
             <div class="legend-line" style="background: var(--accent-blue);"></div>
             <span>Current LTP</span>
@@ -899,9 +929,10 @@
             <div class="legend-line" style="background: var(--accent-green);"></div>
             <span>Target 1 (+₹98 Fees Covered)</span>
           </div>
-          <div class="legend-item">
-            <div class="legend-line" style="background: rgba(56, 189, 248, 0.4); height: 8px;"></div>
-            <span>Dalton Base</span>
+            <div class="legend-item">
+              <div class="legend-line" style="background: rgba(56, 189, 248, 0.4); height: 8px;"></div>
+              <span>Dalton Base</span>
+            </div>
           </div>
         </div>
       </div>
@@ -987,14 +1018,14 @@
 
           <!-- Trade Selector Pills -->
           <div class="trade-picker-row" id="replay-trade-picker">
-            <button class="trade-select-btn active" onclick="selectReplayTrade('RELIANCE')">RELIANCE SHORT (+₹29.35)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('TCS')">TCS SHORT (+₹31.45)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('INFY')">INFY SHORT (+₹43.20)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('AXISBANK')">AXISBANK (+₹40.20)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('HDFCBANK')">HDFCBANK (+₹30.61)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('SBIN')">SBIN (+₹8.33)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('BAJFINANCE')">BAJFINANCE (+₹4.13)</button>
-            <button class="trade-select-btn" onclick="selectReplayTrade('KOTAKBANK')">KOTAKBANK (-₹28.60)</button>
+            <button class="trade-select-btn active" onclick="selectReplayTrade('RELIANCE', event)">RELIANCE SHORT (+₹29.35)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('TCS', event)">TCS SHORT (+₹31.45)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('INFY', event)">INFY SHORT (+₹43.20)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('AXISBANK', event)">AXISBANK (+₹40.20)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('HDFCBANK', event)">HDFCBANK (+₹30.61)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('SBIN', event)">SBIN (+₹8.33)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('BAJFINANCE', event)">BAJFINANCE (+₹4.13)</button>
+            <button class="trade-select-btn" onclick="selectReplayTrade('KOTAKBANK', event)">KOTAKBANK (-₹28.60)</button>
           </div>
 
           <!-- Milestone Stepper Buttons -->
@@ -1256,7 +1287,7 @@
         card.innerHTML = `
           <div class="stock-header">
             <span>${sym}</span>
-            <span class="stock-delta" id="delta-${sym}">-0.2%</span>
+            <span class="stock-delta" id="delta-${sym}">--</span>
           </div>
           <div class="stock-ltp" id="ltp-${sym}">--</div>
           <div class="depth-bar-wrap">
@@ -1267,6 +1298,10 @@
             <div class="depth-bar">
               <div class="depth-bid" id="depth-bid-${sym}" style="width: 50%;"></div>
               <div class="depth-ask" id="depth-ask-${sym}" style="width: 50%;"></div>
+            </div>
+            <div style="display: flex; justify-content: space-between; margin-top: 3px; font-size: 9px; color: var(--text-dim);">
+              <span>Tick: <strong id="ltt-${sym}" style="color: var(--text-muted);">--</strong></span>
+              <span>Vol: <strong id="vol-${sym}" style="color: var(--text-muted);">--</strong></span>
             </div>
           </div>
         `;
@@ -1295,6 +1330,20 @@
         const resp = await fetch(`/api/candles/${symbol}`);
         if (!resp.ok) return;
         const data = await resp.json();
+        const sessionBadge = document.getElementById('chart-session-badge');
+        if (sessionBadge && data.session_date) {
+          if (data.is_live_today) {
+            sessionBadge.textContent = `SESSION: ${data.session_date} [LIVE TODAY]`;
+            sessionBadge.style.color = "var(--accent-green)";
+            sessionBadge.style.background = "rgba(16, 185, 129, 0.14)";
+            sessionBadge.style.borderColor = "rgba(16, 185, 129, 0.35)";
+          } else {
+            sessionBadge.textContent = `SESSION: ${data.session_date} [LAST ACTIVE]`;
+            sessionBadge.style.color = "var(--accent-amber)";
+            sessionBadge.style.background = "rgba(245, 158, 11, 0.12)";
+            sessionBadge.style.borderColor = "rgba(245, 158, 11, 0.3)";
+          }
+        }
         if (data.status === "SUCCESS" && data.candles && data.candles.length > 0) {
           candlesCache[symbol] = data.candles;
           drawCandlestickChart(symbol, data.candles);
@@ -1450,10 +1499,10 @@
     // -------------------------------------------------------------------------
     // 3. Two-Mode Neutralizer: Historical Trade Replay & Risk Auditor
     // -------------------------------------------------------------------------
-    function selectReplayTrade(sym) {
+    function selectReplayTrade(sym, evt) {
       selectedReplaySymbol = sym;
       document.querySelectorAll('.trade-select-btn').forEach(b => b.classList.remove('active'));
-      event.target.classList.add('active');
+      if (evt && evt.target) evt.target.classList.add('active');
 
       const trade = REPLAY_TRADES[sym];
       if (!trade) return;
@@ -1555,7 +1604,9 @@
         // Update mode badge
         const badge = document.getElementById('telemetry-mode-badge');
         badge.textContent = data.badge;
-        badge.style.color = data.is_market_open ? "var(--accent-green)" : "var(--accent-blue)";
+        badge.style.color = data.is_market_open
+          ? "var(--accent-green)"
+          : (data.mode === "HOLIDAY_SURVEILLANCE" ? "var(--accent-amber)" : "var(--accent-blue)");
 
         const container = document.getElementById('thought-stream');
         container.innerHTML = '';
@@ -1610,6 +1661,44 @@
         if (!resp.ok) return;
         const data = await resp.json();
 
+        // Update Exchange Status Pill & Strategy Directive
+        if (data.market_status) {
+          const ms = data.market_status;
+          const exPill = document.getElementById('top-exchange-pill');
+          const exStatus = document.getElementById('top-exchange-status');
+          const pmGlobal = document.getElementById('pm-global-session');
+
+          if (exStatus) exStatus.textContent = ms.status_label || "EXCHANGE STANDBY";
+          if (ms.is_open) {
+            if (exStatus) exStatus.style.color = "var(--accent-green)";
+            if (exPill) exPill.style.borderColor = "rgba(16, 185, 129, 0.35)";
+            if (pmGlobal) pmGlobal.textContent = "LIVE SESSION ACTIVE";
+          } else if (ms.is_holiday) {
+            if (exStatus) exStatus.style.color = "var(--accent-amber)";
+            if (exPill) exPill.style.borderColor = "rgba(245, 158, 11, 0.35)";
+            if (pmGlobal) pmGlobal.textContent = `HOLIDAY STANDBY • NEXT: ${ms.next_session || 'WED 09:15 IST'}`;
+          } else {
+            if (exStatus) exStatus.style.color = "var(--accent-blue)";
+            if (exPill) exPill.style.borderColor = "rgba(56, 189, 248, 0.3)";
+            if (pmGlobal) pmGlobal.textContent = `OFF-HOURS RADAR • NEXT: ${ms.next_session || '09:15 IST'}`;
+          }
+        }
+
+        if (data.strategy) {
+          const regBadge = document.getElementById('macro-regime-badge');
+          const regDesc = document.getElementById('macro-directive');
+          if (regBadge && data.strategy.macro_regime) {
+            regBadge.textContent = data.strategy.macro_regime;
+          }
+          if (regDesc) {
+            const phase = data.strategy.active_phase || "SYSTEM_ARMED";
+            const nextSess = (data.market_status && data.market_status.next_session) ? data.market_status.next_session : "Next NSE Session";
+            regDesc.textContent = (data.market_status && data.market_status.is_open)
+              ? `Phase: ${phase} • Dual-direction scanning active. Strict 1-Trade Mutex across 9 core securities.`
+              : `Phase: ${phase} • Quotes reflecting last NSE close (${(data.market_status && data.market_status.last_active_date) || '2026-11-09'}). Next open: ${nextSess}.`;
+          }
+        }
+
         // Update Top Header & KPIs
         if (data.account) {
           const cash = data.account.clear_cash.toFixed(2);
@@ -1649,6 +1738,8 @@
             const askEl = document.getElementById(`ask-val-${sym}`);
             const bidBar = document.getElementById(`depth-bid-${sym}`);
             const askBar = document.getElementById(`depth-ask-${sym}`);
+            const lttEl = document.getElementById(`ltt-${sym}`);
+            const volEl = document.getElementById(`vol-${sym}`);
 
             if (ltpEl) ltpEl.textContent = `₹${d.ltp.toFixed(2)}`;
             const delta = d.open > 0 ? ((d.ltp - d.open) / d.open) * 100 : 0;
@@ -1659,13 +1750,18 @@
 
             if (d.ltp >= d.open) greenCount++;
 
-            if (bidEl) bidEl.textContent = (d.buy_depth || 0).toLocaleString();
-            if (askEl) askEl.textContent = (d.sell_depth || 0).toLocaleString();
+            const bDepth = d.buy_depth || 0;
+            const sDepth = d.sell_depth || 0;
+            if (bidEl) bidEl.textContent = bDepth.toLocaleString();
+            if (askEl) askEl.textContent = sDepth.toLocaleString();
 
-            const totalDepth = (d.buy_depth || 1) + (d.sell_depth || 1);
-            const bidPct = Math.round(((d.buy_depth || 1) / totalDepth) * 100);
+            const totalDepth = bDepth + sDepth;
+            const bidPct = totalDepth > 0 ? Math.round((bDepth / totalDepth) * 100) : 50;
             if (bidBar) bidBar.style.width = `${bidPct}%`;
             if (askBar) askBar.style.width = `${100 - bidPct}%`;
+
+            if (lttEl) lttEl.textContent = d.last_trade_time || "--";
+            if (volEl) volEl.textContent = (d.volume || 0).toLocaleString();
           });
 
           // Breadth Update
