@@ -542,7 +542,12 @@ def run_single_stress_test(session_1m: List[Dict[str, Any]], test_num: int) -> D
             direction = "SHORT" if test_num in (5, 7, 8) else "LONG"
             atr = max(m["atr_causal"], c_p * 0.0055)
             sl = round(c_p + atr, 2) if direction == "SHORT" else round(c_p - atr, 2)
-            op = engine.compute_order_parameters("SBIN", c_p, sl, direction=direction)
+            macro_aligned = (
+                (c_p > m["vwap"] and m["ret_30m_pct"] > 0.15)
+                if direction == "LONG"
+                else (c_p < m["vwap"] and m["ret_30m_pct"] < -0.15)
+            )
+            op = engine.compute_order_parameters("SBIN", c_p, sl, direction=direction, macro_aligned=macro_aligned)
             if op.get("status") == "APPROVED":
                 qty = int(op["total_qty"])
                 m_ok = margin_v.validate_pre_order_margin("SBIN", qty, c_p, equity, equity)
@@ -564,6 +569,7 @@ def run_single_stress_test(session_1m: List[Dict[str, Any]], test_num: int) -> D
                         "qty": qty,
                         "risk_sh": abs(c_p - sl),
                         "peak_r": 0.0,
+                        "adverse_streak": 0,
                         "cl_ord_id": cl_id,
                     }
 
@@ -626,16 +632,63 @@ def run_single_stress_test(session_1m: List[Dict[str, Any]], test_num: int) -> D
                     active_tr = None
                     last_exit_bar = t
             else:
-                # Update Two-Mode floor causally
-                fav = (active_tr["entry_price"] - l_p) if is_s else (h_p - active_tr["entry_price"])
-                pk = max(active_tr["peak_r"], max(0.0, fav / max(1e-6, active_tr["risk_sh"])))
-                active_tr["peak_r"] = pk
-                if pk >= 0.70:
-                    td = pk * 0.70 * active_tr["risk_sh"]
-                    mb = round(active_tr["entry_price"] - td if is_s else active_tr["entry_price"] + td, 2)
-                    active_tr["active_floor"] = min(active_tr["active_floor"], active_tr["fee_guard_price"], mb) if is_s else max(active_tr["active_floor"], active_tr["fee_guard_price"], mb)
-                elif pk >= 0.50:
-                    active_tr["active_floor"] = min(active_tr["active_floor"], active_tr["fee_guard_price"]) if is_s else max(active_tr["active_floor"], active_tr["fee_guard_price"])
+                # Dual-bar adverse order-flow invalidation check BEFORE hitting full -1.00R stop
+                vwap_broken = (c_p > m["vwap"] and c_p > o_p) if is_s else (c_p < m["vwap"] and c_p < o_p)
+                if vwap_broken and float(b["volume"]) >= 1.6 * max(1.0, avg_vol):
+                    active_tr["adverse_streak"] = active_tr.get("adverse_streak", 0) + 1
+                else:
+                    active_tr["adverse_streak"] = 0
+
+                ev_bar = engine.evaluate_bar(
+                    entry_price=active_tr["entry_price"],
+                    stop_loss=active_tr["stop_loss"],
+                    qty=active_tr["qty"],
+                    bar_open=o_p,
+                    bar_high=h_p,
+                    bar_low=l_p,
+                    bar_close=c_p,
+                    bar_vol=float(b["volume"]),
+                    avg_vol=avg_vol,
+                    cvd_delta=float(m["cum_delta"]),
+                    cvd_persistent=(active_tr["adverse_streak"] >= 2),
+                    current_active_floor=active_tr["active_floor"],
+                    peak_favorable_r=active_tr["peak_r"],
+                    direction=active_tr["direction"],
+                    adverse_flow_bars=active_tr["adverse_streak"],
+                    vwap_broken=vwap_broken,
+                    holding_minutes=(t - active_tr["entry_bar"]),
+                )
+                if ev_bar["action"] == "ADVERSE_FLOW_INVALIDATION_EXIT" and (not c_locked and bid_depth > 0):
+                    ex_p = ev_bar["exit_price"]
+                    qty = active_tr["qty"]
+                    gross = ((active_tr["entry_price"] - ex_p) if is_s else (ex_p - active_tr["entry_price"])) * qty
+                    fees = cost_m.compute_intraday_roundtrip(active_tr["entry_price"], ex_p, qty)["total_friction"]
+                    net = round(gross - fees, 2)
+                    equity = round(equity + net, 2)
+                    engine.capital = equity
+                    dd_p = round(((equity - peak_eq) / peak_eq) * 100.0, 2)
+                    if dd_p < max_dd_pct:
+                        max_dd_pct = dd_p
+                    if (equity - cap_start) <= -daily_loss_limit:
+                        daily_halted = True
+                    trades.append(
+                        {
+                            "direction": active_tr["direction"],
+                            "entry": active_tr["entry_price"],
+                            "exit": ex_p,
+                            "net_pnl": net,
+                            "fees": fees,
+                            "gap_through": False,
+                            "reason": "ADVERSE_FLOW_INVALIDATION_CUT",
+                        }
+                    )
+                    active_tr = None
+                    last_exit_bar = t
+                else:
+                    fav = (active_tr["entry_price"] - l_p) if is_s else (h_p - active_tr["entry_price"])
+                    active_tr["peak_r"] = max(active_tr["peak_r"], max(0.0, fav / max(1e-6, active_tr["risk_sh"])))
+                    if "active_floor" in ev_bar:
+                        active_tr["active_floor"] = ev_bar["active_floor"]
 
         # Admission check during stress when FLAT: verifies guards block toxic entries
         if active_tr is None and last_exit_bar != t and b.get("is_synthetic"):

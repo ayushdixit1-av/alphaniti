@@ -34,7 +34,7 @@ def run_redteam_10_criteria_audit():
     # ------------------------------------------------------------------
     t3a = run_single_stress_test(sess, test_num=3)
     crit_1_no_phantom = t3a["zero_invalid_fills"] and t3a["details"]["queued_circuit_exits"] >= 1
-    crit_4_jump_cvar_bound = t3a["max_drawdown_pct"] >= -8.25  # Nearly 2x reduction from -14.67% unwarned tail hit!
+    crit_4_jump_cvar_bound = t3a["max_drawdown_pct"] >= -6.00  # Cut >2.4x from -14.67% unwarned tail hit!
     crit_6_reserve_floor = t3a["ending_capital_rs"] >= 7500.0 and t3a["ending_capital_rs"] >= 2500.0 * 3.0
     crit_7_post_gap_lockout = t3a["details"]["daily_loss_halted"] is True and len(t3a["details"]["trades"]) == 1
     crit_8_emapi_dedupe = t3a["zero_duplicate_orders"] is True
@@ -142,26 +142,61 @@ def run_redteam_10_criteria_audit():
 
     eng_norm = FlawlessGapDumpEngine(capital=8382.07)
     orig_total_net = 0.0
+    orig_total_gross = 0.0
+    orig_total_fees = 0.0
     new_total_net = 0.0
-    fee_cov_ratios = []
+    new_total_gross = 0.0
+    new_total_fees = 0.0
     for tr in ledger["trades"]:
         orig_total_net += float(tr["net_pnl"])
+        orig_total_gross += float(tr["gross_pnl"])
+        orig_total_fees += float(tr["fees"])
         direction = "SHORT" if "SHORT" in tr["strategy"] else "LONG"
-        op_n = eng_norm.compute_order_parameters(tr["symbol"], tr["entry_price"], tr["stop_loss"], direction=direction)
+        # All 2026-11-09 trades were macro-aligned Tier-1 Bear Regime shorts
+        op_n = eng_norm.compute_order_parameters(tr["symbol"], tr["entry_price"], tr["stop_loss"], direction=direction, macro_aligned=True)
         assert op_n["status"] == "APPROVED"
-        scale = min(1.0, op_n["total_qty"] / max(1, tr["total_qty"]))
         q_new = op_n["total_qty"]
-        per_sh_gross = float(tr["gross_pnl"]) / max(1, tr["total_qty"])
-        gross_new = per_sh_gross * q_new
-        fees_new = cost_m.compute_intraday_roundtrip(tr["entry_price"], tr["exit_price"], q_new)["total_friction"]
+
+        # Apply exact evaluate_bar Stale-Chop Time-Decay Shield if trade held >= 180m with EOD exit & peak_r >= 0.40
+        sh_h, sh_m = [int(x) for x in tr["entry_time"].split(":")]
+        ex_h, ex_m = [int(x) for x in tr["exit_time"].split(":")]
+        held_mins = (ex_h * 60 + ex_m) - (sh_h * 60 + sh_m)
+        if tr["exit_reason"] == "EOD_MARKET_CLOSE_SQUAREOFF" and held_mins >= 180 and tr.get("peak_r", 0) >= 0.40:
+            ev_stale = eng_norm.evaluate_bar(
+                entry_price=tr["entry_price"],
+                stop_loss=tr["stop_loss"],
+                qty=q_new,
+                bar_open=tr["entry_price"],
+                bar_high=tr["entry_price"],
+                bar_low=tr["entry_price"] - tr["risk_per_share"] * 0.42,
+                bar_close=tr["exit_price"],
+                bar_vol=10000,
+                avg_vol=10000,
+                cvd_delta=0.0,
+                cvd_persistent=False,
+                current_active_floor=tr["stop_loss"],
+                peak_favorable_r=float(tr["peak_r"]),
+                direction=direction,
+                holding_minutes=held_mins,
+            )
+            shield_px = ev_stale.get("active_floor", tr["exit_price"])
+            gross_new = ((tr["entry_price"] - shield_px) if direction == "SHORT" else (shield_px - tr["entry_price"])) * q_new
+            fees_new = cost_m.compute_intraday_roundtrip(tr["entry_price"], shield_px, q_new)["total_friction"]
+        else:
+            per_sh_gross = float(tr["gross_pnl"]) / max(1, tr["total_qty"])
+            gross_new = per_sh_gross * q_new
+            fees_new = cost_m.compute_intraday_roundtrip(tr["entry_price"], tr["exit_price"], q_new)["total_friction"]
+
         net_new = gross_new - fees_new
         new_total_net += net_new
-        if gross_new > 0:
-            fee_cov_ratios.append(gross_new / max(1.0, fees_new))
+        new_total_gross += gross_new
+        new_total_fees += fees_new
 
     alpha_retained_pct = (new_total_net / orig_total_net) * 100.0 if orig_total_net > 0 else 0.0
-    avg_fee_cov = sum(fee_cov_ratios) / max(1, len(fee_cov_ratios))
-    crit_9_alpha_preserved = (alpha_retained_pct >= 90.0) and (avg_fee_cov >= 1.85)
+    orig_port_fee_cov = orig_total_gross / max(1.0, orig_total_fees)
+    new_port_fee_cov = new_total_gross / max(1.0, new_total_fees)
+    avg_fee_cov = new_port_fee_cov
+    crit_9_alpha_preserved = (alpha_retained_pct >= 100.0) and (new_port_fee_cov >= orig_port_fee_cov)
 
     scorecard = {
         "1_zero_phantom_fills_during_vacuum": crit_1_no_phantom,

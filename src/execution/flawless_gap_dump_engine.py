@@ -68,14 +68,18 @@ class FlawlessGapDumpEngine:
         l2_fragility_score: float = 0.0,
         tail_gap_pct: Optional[float] = None,
         max_single_gap_pct: Optional[float] = None,
+        macro_aligned: bool = True,
     ) -> float:
         """
         Dual-Budget Jump-CVaR Notional Ceiling:
-        Bounds worst-case instantaneous gap loss (Notional * J_gap <= L_tol * Equity),
-        preventing tight stops on calm bars from inflating notional to 3x+ cash leverage.
+        Bounds worst-case instantaneous gap loss (Notional * J_gap <= L_tol * Equity).
+        Full Tier-0 cap (~1.58x) applies only under verified macro confluence;
+        unaligned entries scale symmetrically down (~1.05x) to halve surprise gap damage.
         """
         j_gap = tail_gap_pct if tail_gap_pct is not None else self.default_tail_gap_pct
-        base_tol = max_single_gap_pct if max_single_gap_pct is not None else self.max_single_gap_equity_pct
+        base_tol = max_single_gap_pct if max_single_gap_pct is not None else (
+            self.max_single_gap_equity_pct if macro_aligned else 0.047
+        )
         phi = max(0.0, min(1.0, float(l2_fragility_score)))
         if phi >= 0.62:
             return 0.0
@@ -94,7 +98,8 @@ class FlawlessGapDumpEngine:
     def compute_order_parameters(self, symbol: str, entry_price: float, stop_loss: float,
                                  ask_depth_5l: list = None, bid_depth_5l: list = None,
                                  direction: str = "SHORT",
-                                 l2_fragility_score: float = 0.0):
+                                 l2_fragility_score: float = 0.0,
+                                 macro_aligned: bool = True):
         # Concern 6: F&O Master Whitelist Check
         if symbol not in self.fo_whitelist:
             return {"status": "REJECTED", "reason": "NON_FO_CIRCUIT_AUCTION_RISK"}
@@ -114,7 +119,7 @@ class FlawlessGapDumpEngine:
         risk_budget = self.get_dynamic_risk_budget(self.capital)
         raw_qty = int(risk_budget // risk_per_share)
         jump_notional_cap = self.compute_jump_cvar_notional_cap(
-            self.capital, l2_fragility_score=l2_fragility_score
+            self.capital, l2_fragility_score=l2_fragility_score, macro_aligned=macro_aligned
         )
         max_notional_qty = int(jump_notional_cap // entry_price)
         if max_notional_qty < 1 or raw_qty < 1:
@@ -166,10 +171,14 @@ class FlawlessGapDumpEngine:
                      bar_vol: float, avg_vol: float, cvd_delta: float, cvd_persistent: bool,
                      current_active_floor: float, peak_favorable_r: float,
                      simulated_tick_slippage: float = 0.0,
-                     direction: str = "SHORT"):
+                     direction: str = "SHORT",
+                     adverse_flow_bars: int = 0,
+                     vwap_broken: bool = False,
+                     holding_minutes: int = 0):
         """
-        Universal Bi-Directional Trailing & Reversal Engine:
-        Rectifies Concerns 2, 3, 4, 8, 9 with conservative OHLC-bounded gap-through stop fills.
+        Universal Bi-Directional Trailing, Adverse-Flow Compression & Reversal Engine:
+        Rectifies Concerns 2, 3, 4, 8, 9 with conservative OHLC-bounded gap-through stop fills,
+        accurate statutory fees, dual-bar adverse invalidation cuts, and stale-chop time shields.
         """
         is_short = direction.upper() == "SHORT"
         risk_per_share = abs(entry_price - stop_loss)
@@ -177,7 +186,8 @@ class FlawlessGapDumpEngine:
             return {"action": "HOLD", "active_floor": current_active_floor, "peak_r": peak_favorable_r, "mode": "INVALID_PARAMS"}
 
         sign = -1.0 if is_short else 1.0
-        fee_guard_price = round(entry_price + sign * ((self.fixed_fee + self.poisson_buffer) / qty), 2)
+        actual_fee = self.cost_model.compute_intraday_roundtrip(entry_price, entry_price, qty)["total_friction"]
+        fee_guard_price = round(entry_price + sign * ((actual_fee + self.poisson_buffer) / qty), 2)
         
         # Step 1: Check floor/stop breach (conservative gap-through handling strictly inside [bar_low, bar_high])
         floor_breached = (bar_high >= current_active_floor) if is_short else (bar_low <= current_active_floor)
@@ -191,18 +201,19 @@ class FlawlessGapDumpEngine:
 
             effective_exit_price = round(max(bar_low, min(bar_high, raw_exit)), 2)
             gross_pnl = ((entry_price - effective_exit_price) if is_short else (effective_exit_price - entry_price)) * qty
-            net_pnl = gross_pnl - self.fixed_fee
+            fees_paid = self.cost_model.compute_intraday_roundtrip(entry_price, effective_exit_price, qty)["total_friction"]
+            net_pnl = gross_pnl - fees_paid
 
-            if peak_favorable_r >= 0.50:
+            if peak_favorable_r >= 0.40:
                 return {
                     "action": "PROFIT_LOCKED_EXIT",
                     "exit_price": effective_exit_price,
                     "gap_through": gap_through,
                     "gross_pnl": round(gross_pnl, 2),
-                    "fees_paid": self.fixed_fee,
+                    "fees_paid": fees_paid,
                     "net_pnl": round(net_pnl, 2),
                     "is_loss": net_pnl < 0,
-                    "reason": "GAP_THROUGH_PROFIT_FLOOR_EXECUTED" if gap_through else "PEAK_GE_0_50R_PROFIT_FLOOR_EXECUTED"
+                    "reason": "GAP_THROUGH_PROFIT_FLOOR_EXECUTED" if gap_through else "PROFIT_FLOOR_EXECUTED"
                 }
             else:
                 return {
@@ -210,7 +221,7 @@ class FlawlessGapDumpEngine:
                     "exit_price": effective_exit_price,
                     "gap_through": gap_through,
                     "gross_pnl": round(gross_pnl, 2),
-                    "fees_paid": self.fixed_fee,
+                    "fees_paid": fees_paid,
                     "net_pnl": round(net_pnl, 2),
                     "is_loss": net_pnl < 0,
                     "reason": "GAP_THROUGH_HARD_STOP_EXECUTED" if gap_through else "INITIAL_HARD_STOP_EXECUTED"
@@ -220,8 +231,25 @@ class FlawlessGapDumpEngine:
         current_favorable_move = (entry_price - bar_low) if is_short else (bar_high - entry_price)
         current_r = max(0.0, current_favorable_move / risk_per_share)
         new_peak_r = max(peak_favorable_r, current_r)
+        close_r = ((entry_price - bar_close) if is_short else (bar_close - entry_price)) / risk_per_share
 
-        # Step 3: Two-Mode Floor with Poisson Buffer
+        # Step 2b: Dual-Bar High-Volume Adverse Invalidation Cut (cuts -1.0R shock bleeds early at ~ -0.50R)
+        if new_peak_r < 0.35 and close_r <= -0.45 and vwap_broken and bar_vol >= 1.6 * max(1.0, avg_vol) and adverse_flow_bars >= 2:
+            exit_px = round(max(bar_low, min(bar_high, bar_close)), 2)
+            gross_pnl = ((entry_price - exit_px) if is_short else (exit_px - entry_price)) * qty
+            fees_paid = self.cost_model.compute_intraday_roundtrip(entry_price, exit_px, qty)["total_friction"]
+            return {
+                "action": "ADVERSE_FLOW_INVALIDATION_EXIT",
+                "exit_price": exit_px,
+                "gap_through": False,
+                "gross_pnl": round(gross_pnl, 2),
+                "fees_paid": fees_paid,
+                "net_pnl": round(gross_pnl - fees_paid, 2),
+                "is_loss": True,
+                "reason": "ADVERSE_FLOW_INVALIDATION_CUT",
+            }
+
+        # Step 3: Two-Mode Floor with Poisson Buffer + Stale-Chop Time-Decay Shield
         if new_peak_r >= 0.50:
             # Concern 9: Dual sub-bar CVD persistence eliminates single-spike whale traps
             adversarial_flow = (cvd_delta > 0) if is_short else (cvd_delta < 0)
@@ -242,13 +270,23 @@ class FlawlessGapDumpEngine:
                 active_floor = candidate_floor
             else:
                 active_floor = min(candidate_floor, current_active_floor) if is_short else max(candidate_floor, current_active_floor)
-            min_net = (((entry_price - active_floor) if is_short else (active_floor - entry_price)) * qty) - self.fixed_fee
+            min_net = (((entry_price - active_floor) if is_short else (active_floor - entry_price)) * qty) - actual_fee
             return {
                 "action": "HOLD",
                 "active_floor": active_floor,
                 "peak_r": round(new_peak_r, 2),
                 "guaranteed_min_net_pnl": round(min_net, 2),
                 "mode": mode
+            }
+        elif holding_minutes >= 180 and new_peak_r >= 0.40:
+            # Stale-Chop Time-Decay Shield: protect +0.15R on stalled 3h+ positions before EOD fee bleed
+            stale_floor = round(entry_price + sign * (0.15 * risk_per_share), 2)
+            active_floor = min(stale_floor, current_active_floor) if is_short else max(stale_floor, current_active_floor)
+            return {
+                "action": "HOLD",
+                "active_floor": active_floor,
+                "peak_r": round(new_peak_r, 2),
+                "mode": "TIME_DECAY_STALE_SHIELD"
             }
         else:
             return {
