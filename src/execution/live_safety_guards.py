@@ -25,11 +25,19 @@ class BrokerLatencyWatchdog:
         self.last_raw_latency_ms = latency_ms
         self.rolling_latency_ms = (self.alpha * latency_ms) + ((1.0 - self.alpha) * self.rolling_latency_ms)
 
-    def get_adaptive_order_routing(self, symbol: str, target_price: float, best_bid: float) -> Dict[str, Any]:
+    def get_adaptive_order_routing(self, symbol: str, target_price: float, best_bid: float, emergency_exit: bool = False) -> Dict[str, Any]:
         # Instantaneous spike check takes precedence over smoothed EMA
         effective_latency = max(self.last_raw_latency_ms, self.rolling_latency_ms)
         
         if effective_latency > self.max_allowable_latency_ms:
+            if emergency_exit:
+                return {
+                    "route": "EXCHANGE_NATIVE_SL_FAILOVER",
+                    "latency_ms": round(effective_latency, 1),
+                    "reason": f"API_OUTAGE_FAILOVER_TO_EXCHANGE_SL ({effective_latency:.1f}ms > {self.max_allowable_latency_ms}ms)",
+                    "order_type": "SL_L_NATIVE",
+                    "limit_price": round(best_bid - 0.15, 2),
+                }
             return {
                 "route": "ABORT_CONGESTION",
                 "reason": f"CRITICAL_NETWORK_CONGESTION ({effective_latency:.1f}ms > {self.max_allowable_latency_ms}ms)",
