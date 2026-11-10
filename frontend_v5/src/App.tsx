@@ -11,6 +11,7 @@ import {
   Wallet,
   KeyRound,
   Gauge,
+  CandlestickChart,
 } from 'lucide-react';
 import {
   AuditLedgerResponse,
@@ -27,6 +28,7 @@ import { ReplayWorkspace } from './components/workspaces/ReplayWorkspace';
 import { AIResearchWorkspace } from './components/workspaces/AIResearchWorkspace';
 import { AuditRiskWorkspace } from './components/workspaces/AuditRiskWorkspace';
 import { RiskCommandCenter } from './components/workspaces/RiskCommandCenter';
+import { StrategyChartWorkspace } from './components/workspaces/StrategyChartWorkspace';
 import { TelemetryConsole } from './components/layout/TelemetryConsole';
 import { CommandPalette } from './components/layout/CommandPalette';
 
@@ -44,10 +46,25 @@ const ALL_SYMBOLS = [
   'BANKNIFTY',
 ];
 
-type WorkspaceId = 'execution' | 'replay' | 'ai' | 'risk' | 'audit';
+type WorkspaceId = 'execution' | 'chart' | 'replay' | 'ai' | 'risk' | 'audit';
+
+function getInitialWorkspace(): WorkspaceId {
+  const valid: WorkspaceId[] = ['execution', 'chart', 'replay', 'ai', 'risk', 'audit'];
+  const hash = (window.location.hash || '').replace('#', '').toLowerCase() as WorkspaceId;
+  if (valid.includes(hash)) return hash;
+  const qp = new URLSearchParams(window.location.search).get('ws')?.toLowerCase() as WorkspaceId | undefined;
+  if (qp && valid.includes(qp)) return qp;
+  return 'execution';
+}
 
 export function App() {
-  const [workspace, setWorkspace] = useState<WorkspaceId>('execution');
+  const [workspace, setWorkspaceState] = useState<WorkspaceId>(getInitialWorkspace);
+  const setWorkspace = useCallback((ws: WorkspaceId) => {
+    setWorkspaceState(ws);
+    if (window.location.hash !== `#${ws}`) {
+      window.history.replaceState(null, '', `#${ws}`);
+    }
+  }, []);
   const [selectedSymbol, setSelectedSymbol] = useState<string>('SBIN');
   const [timeframe, setTimeframe] = useState<string>('5m');
   const [searchOpen, setSearchOpen] = useState<boolean>(false);
@@ -228,6 +245,7 @@ export function App() {
 
   const navItems: Array<{ id: WorkspaceId; short: string; label: string; icon: React.ReactNode }> = [
     { id: 'execution', short: 'Exec', label: 'Execution', icon: <Activity size={17} /> },
+    { id: 'chart', short: 'Chart', label: '1m A8 Chart', icon: <CandlestickChart size={17} /> },
     { id: 'replay', short: 'Rply', label: 'Replay', icon: <History size={17} /> },
     { id: 'ai', short: 'AI', label: 'AI Research', icon: <Cpu size={17} /> },
     { id: 'risk', short: 'Risk', label: 'Risk Command', icon: <ShieldAlert size={17} /> },
@@ -343,6 +361,28 @@ export function App() {
                   {it.label}
                 </button>
               ))}
+              <a
+                href="/#chart"
+                target="_blank"
+                rel="noopener noreferrer"
+                title="Open 1-Minute Strategy Chart Explorer in a dedicated browser tab"
+                style={{
+                  marginLeft: 8,
+                  padding: '3px 9px',
+                  borderRadius: 6,
+                  border: '1px solid rgba(56, 189, 248, 0.35)',
+                  background: 'rgba(56, 189, 248, 0.1)',
+                  color: 'var(--accent-cyan)',
+                  fontSize: 11,
+                  fontFamily: 'var(--mono)',
+                  textDecoration: 'none',
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: 4,
+                }}
+              >
+                Open #chart ↗
+              </a>
             </div>
 
             {ms?.is_holiday && (
@@ -368,6 +408,13 @@ export function App() {
               auditLedger={auditLedger}
               onOpenSearch={() => setSearchOpen(true)}
               onRefreshSymbol={fetchSymbolData}
+            />
+          )}
+
+          {workspace === 'chart' && (
+            <StrategyChartWorkspace
+              initialSymbol={selectedSymbol}
+              defaultCapital={clearCash > 0 ? clearCash : 10000}
             />
           )}
 

@@ -6,7 +6,7 @@ interface CommandPaletteProps {
   onClose: () => void;
   symbols: string[];
   onSelectSymbol: (sym: string) => void;
-  onSelectWorkspace: (ws: 'execution' | 'replay' | 'ai' | 'risk' | 'audit') => void;
+  onSelectWorkspace: (ws: 'execution' | 'chart' | 'replay' | 'ai' | 'risk' | 'audit') => void;
 }
 
 export const CommandPalette: React.FC<CommandPaletteProps> = ({
@@ -26,8 +26,9 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
 
   const q = query.trim().toUpperCase();
   const matchedSyms = symbols.filter((s) => s.includes(q));
-  const workspaces: Array<{ id: 'execution' | 'replay' | 'ai' | 'risk' | 'audit'; label: string }> = [
+  const workspaces: Array<{ id: 'execution' | 'chart' | 'replay' | 'ai' | 'risk' | 'audit'; label: string }> = [
     { id: 'execution', label: 'Workspace: Execution Cockpit' },
+    { id: 'chart', label: 'Workspace: 1m A8 Strategy Chart (Any NSE Stock)' },
     { id: 'replay', label: 'Workspace: Two-Mode Replay & Stress' },
     { id: 'ai', label: 'Workspace: AI Research & Macro Gaps' },
     { id: 'risk', label: 'Workspace: Risk Command Center' },

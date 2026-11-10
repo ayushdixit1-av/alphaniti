@@ -2198,6 +2198,21 @@ def _execute_isolated_black_swan(
     result["daemon_state_isolated"] = isolated_verified
     return result
 
+from src.analytics.strategy_chart_service import build_strategy_chart_router
+
+
+def _resolve_live_groww_client():
+    try:
+        if daemon and getattr(daemon, "groww", None):
+            return daemon.groww
+    except Exception:
+        pass
+    return None
+
+
+app.include_router(build_strategy_chart_router(_resolve_live_groww_client))
+
+
 # -------------------------------------------------------------------------
 # OpenView Free Institutional Charting API
 # -------------------------------------------------------------------------
