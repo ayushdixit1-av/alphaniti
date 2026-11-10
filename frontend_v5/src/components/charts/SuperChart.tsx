@@ -15,6 +15,8 @@ import {
 import {
   Camera,
   Maximize2,
+  Minimize2,
+  Scan,
   Crosshair,
   SlidersHorizontal,
   ZoomIn,
@@ -91,6 +93,26 @@ export const SuperChart: React.FC<SuperChartProps> = ({
   const [showHL, setShowHL] = useState(true);
   const [showLevels, setShowLevels] = useState(true);
   const [magnetMode, setMagnetMode] = useState(false);
+  const [isMaximized, setIsMaximized] = useState(false);
+
+  // Restore full-window maximize on Escape key & lock background scroll when maximized
+  useEffect(() => {
+    if (!isMaximized) return;
+    const prevOverflow = document.body.style.overflow;
+    document.body.style.overflow = 'hidden';
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') {
+        setIsMaximized(false);
+      }
+    };
+    window.addEventListener('keydown', onKey);
+    const t = setTimeout(() => chartRef.current?.timeScale().fitContent(), 60);
+    return () => {
+      document.body.style.overflow = prevOverflow;
+      window.removeEventListener('keydown', onKey);
+      clearTimeout(t);
+    };
+  }, [isMaximized]);
 
   // Built-in Replay state (used when externalReplayIndex is not explicitly provided)
   const isControlledReplay = externalReplayIndex !== undefined;
@@ -778,7 +800,87 @@ export const SuperChart: React.FC<SuperChartProps> = ({
       : 0;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', flex: 1, minHeight: 345 }}>
+    <div
+      style={
+        isMaximized
+          ? {
+              position: 'fixed',
+              inset: 0,
+              zIndex: 180,
+              background: '#06090e',
+              display: 'flex',
+              flexDirection: 'column',
+              width: '100vw',
+              height: '100vh',
+            }
+          : { display: 'flex', flexDirection: 'column', flex: 1, minHeight: 345 }
+      }
+    >
+      {/* Compact Ticker Banner in Full-Window Mode */}
+      {isMaximized && (
+        <div
+          style={{
+            padding: '8px 14px',
+            borderBottom: '1px solid var(--border-subtle)',
+            background: '#0a1019',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            gap: 12,
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, flexWrap: 'wrap' }}>
+            <span className="mono" style={{ fontSize: 15, fontWeight: 800 }}>
+              {symbol === 'NIFTY' || symbol === 'BANKNIFTY' ? symbol : `${symbol}.NS`}
+            </span>
+            <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+              {cockpit?.company_name || 'AlphaNiti SuperChart'}
+            </span>
+            {cockpit && (
+              <>
+                <span className="mono" style={{ fontSize: 15, fontWeight: 800, color: 'var(--accent-green)' }}>
+                  ₹{cockpit.ltp.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </span>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 11.5,
+                    fontWeight: 700,
+                    color: cockpit.change_pts >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+                  }}
+                >
+                  {cockpit.change_pts >= 0 ? '+' : ''}
+                  {cockpit.change_pts.toFixed(2)} ({cockpit.change_pct >= 0 ? '+' : ''}
+                  {cockpit.change_pct.toFixed(2)}%)
+                </span>
+                <span
+                  className="mono"
+                  style={{
+                    fontSize: 10.5,
+                    padding: '2px 8px',
+                    borderRadius: 5,
+                    background: 'rgba(56,189,248,0.12)',
+                    border: '1px solid rgba(56,189,248,0.35)',
+                    color: 'var(--accent-cyan)',
+                  }}
+                >
+                  {cockpit.execution_brief.recommendation}
+                </span>
+              </>
+            )}
+          </div>
+
+          <button
+            className="tf-btn active"
+            style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}
+            onClick={() => setIsMaximized(false)}
+          >
+            <Minimize2 size={13} />
+            <span>Exit Full Window (Esc)</span>
+          </button>
+        </div>
+      )}
+
       {/* Interactive Chart Toolbar */}
       <div className="chart-toolbar" style={{ flexWrap: 'wrap' }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 3, flexWrap: 'wrap' }}>
@@ -878,7 +980,15 @@ export const SuperChart: React.FC<SuperChartProps> = ({
             title="Fit All Candles"
             onClick={() => chartRef.current?.timeScale().fitContent()}
           >
-            <Maximize2 size={13} />
+            <Scan size={13} />
+          </button>
+          <button
+            className={`icon-btn ${isMaximized ? 'active' : ''}`}
+            style={{ color: isMaximized ? 'var(--accent-cyan)' : undefined }}
+            title={isMaximized ? 'Restore Window (Esc)' : 'Maximize Chart to Full Window'}
+            onClick={() => setIsMaximized((m) => !m)}
+          >
+            {isMaximized ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
           </button>
           <button className="icon-btn" title="Export Chart PNG" onClick={handleScreenshot}>
             <Camera size={13} />
