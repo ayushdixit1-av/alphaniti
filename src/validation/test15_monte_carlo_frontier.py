@@ -52,6 +52,12 @@ def generate_10k_randomized_scenarios(
     pre_spread_bps = np.where(fragile_clue, rng.uniform(7.5, 22.0, n_scenarios), rng.uniform(1.5, 6.0, n_scenarios))
     l2_imb_pct = np.where(fragile_clue, rng.uniform(-55.0, -10.0, n_scenarios), rng.uniform(-10.0, 45.0, n_scenarios))
     peer_canary_pct = np.where(fragile_clue, rng.uniform(-1.10, -0.25, n_scenarios), rng.uniform(-0.20, 0.85, n_scenarios))
+    pre_vol_ratio = np.where(
+        fragile_clue,
+        rng.uniform(1.30, 1.85, n_scenarios),
+        np.where(shock_regime, rng.uniform(1.05, 1.65, n_scenarios), rng.uniform(0.85, 1.25, n_scenarios)),
+    )
+    is_gap_window = np.where(shock_regime, rng.random(n_scenarios) < 0.25, rng.random(n_scenarios) < 0.08)
 
     # Post-entry realized path variables (UNKNOWN at entry!)
     # Instantaneous gap: mild normal jitter in non-shock, heavy negative air-pocket tail in shock_regime
@@ -87,6 +93,8 @@ def generate_10k_randomized_scenarios(
                 "pre_spread_bps": float(pre_spread_bps[i]),
                 "l2_imbalance_pct": float(l2_imb_pct[i]),
                 "peer_canary_pct": float(peer_canary_pct[i]),
+                "pre_vol_ratio": float(pre_vol_ratio[i]),
+                "is_gap_window": bool(is_gap_window[i]),
                 "initial_gap_pct": float(initial_gap_pct[i]),
                 "vol_mult": float(vol_mult[i]),
                 "spread_shock_bps": float(spread_shock_bps[i]),
@@ -248,6 +256,8 @@ def evaluate_exposure_config(
                 capital,
                 l2_fragility_score=phi,
                 macro_aligned=sc["macro_aligned"],
+                vix_or_atr_ratio=sc["pre_vol_ratio"],
+                is_gap_window=sc["is_gap_window"],
             )
             eff_mult = min(exposure_mult, j_cap / capital)
         else:

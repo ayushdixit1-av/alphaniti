@@ -69,12 +69,15 @@ class FlawlessGapDumpEngine:
         tail_gap_pct: Optional[float] = None,
         max_single_gap_pct: Optional[float] = None,
         macro_aligned: bool = True,
+        vix_or_atr_ratio: float = 1.0,
+        is_gap_window: bool = False,
     ) -> float:
         """
         Dual-Budget Jump-CVaR Notional Ceiling:
         Bounds worst-case instantaneous gap loss (Notional * J_gap <= L_tol * Equity).
-        Full Tier-0 cap (~1.58x) applies only under verified macro confluence;
-        unaligned entries scale symmetrically down (~1.05x) to halve surprise gap damage.
+        Full Tier-0 cap (~1.58x) applies only under verified macro confluence in calm regimes;
+        unaligned entries (~1.05x), high-volatility clusters (vix_or_atr_ratio >= 1.50 -> ~1.10x),
+        and open/close air-pocket windows (<= 1.00x) compress tail leverage automatically.
         """
         j_gap = tail_gap_pct if tail_gap_pct is not None else self.default_tail_gap_pct
         base_tol = max_single_gap_pct if max_single_gap_pct is not None else (
@@ -85,6 +88,18 @@ class FlawlessGapDumpEngine:
             return 0.0
         effective_tol = base_tol * max(0.0, 1.0 - 1.12 * phi)
         max_notional_jump = (effective_tol * current_equity) / max(0.01, j_gap)
+
+        # Volatility-Regime & Gap-Window Ceiling Compression
+        if vix_or_atr_ratio >= 1.50:
+            vol_mult = max(0.65, 1.10 / max(1.0, vix_or_atr_ratio / 1.50))
+            max_notional_jump = min(max_notional_jump, current_equity * vol_mult)
+        elif vix_or_atr_ratio > 1.25:
+            taper = 1.0 - ((vix_or_atr_ratio - 1.25) / 0.25) * 0.25
+            max_notional_jump = min(max_notional_jump, current_equity * 1.58 * taper)
+
+        if is_gap_window:
+            max_notional_jump = min(max_notional_jump, current_equity * 1.00)
+
         return min(current_equity * 3.50, max_notional_jump)
 
     def verify_orderbook_anti_spoofing(self, ask_depth_5l: list, bid_depth_5l: list) -> bool:
@@ -99,7 +114,10 @@ class FlawlessGapDumpEngine:
                                  ask_depth_5l: list = None, bid_depth_5l: list = None,
                                  direction: str = "SHORT",
                                  l2_fragility_score: float = 0.0,
-                                 macro_aligned: bool = True):
+                                 macro_aligned: bool = True,
+                                 vix_or_atr_ratio: float = 1.0,
+                                 is_gap_window: bool = False,
+                                 enforce_fee_viability: bool = True):
         # Concern 6: F&O Master Whitelist Check
         if symbol not in self.fo_whitelist:
             return {"status": "REJECTED", "reason": "NON_FO_CIRCUIT_AUCTION_RISK"}
@@ -119,7 +137,11 @@ class FlawlessGapDumpEngine:
         risk_budget = self.get_dynamic_risk_budget(self.capital)
         raw_qty = int(risk_budget // risk_per_share)
         jump_notional_cap = self.compute_jump_cvar_notional_cap(
-            self.capital, l2_fragility_score=l2_fragility_score, macro_aligned=macro_aligned
+            self.capital,
+            l2_fragility_score=l2_fragility_score,
+            macro_aligned=macro_aligned,
+            vix_or_atr_ratio=vix_or_atr_ratio,
+            is_gap_window=is_gap_window,
         )
         max_notional_qty = int(jump_notional_cap // entry_price)
         if max_notional_qty < 1 or raw_qty < 1:
@@ -129,6 +151,17 @@ class FlawlessGapDumpEngine:
         # Statutory cost precision check for chosen notional
         actual_roundtrip_fee = self.cost_model.compute_intraday_roundtrip(entry_price, entry_price, qty)["total_friction"]
         effective_fee = max(12.0, actual_roundtrip_fee)
+
+        # Fee-Trap Pre-Flight Gate: Mode A ratchets above breakeven around +0.50R; if +0.56R gross
+        # cannot cover 100% of statutory fees + slippage (ultra-tight <0.54% stops), veto entry
+        if enforce_fee_viability and (0.56 * qty * risk_per_share) <= effective_fee:
+            return {
+                "status": "REJECTED",
+                "reason": "FEE_TRAP_TIGHT_STOP_VETO",
+                "qty": qty,
+                "gross_at_0_56r": round(0.56 * qty * risk_per_share, 2),
+                "estimated_fee": round(effective_fee, 2),
+            }
         
         # Position Split: 50% Leg 1, 50% Leg 2
         q1 = max(1, math.ceil(qty * 0.50))

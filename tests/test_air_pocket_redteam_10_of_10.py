@@ -154,7 +154,9 @@ def run_redteam_10_criteria_audit():
         direction = "SHORT" if "SHORT" in tr["strategy"] else "LONG"
         # All 2026-11-09 trades were macro-aligned Tier-1 Bear Regime shorts
         op_n = eng_norm.compute_order_parameters(tr["symbol"], tr["entry_price"], tr["stop_loss"], direction=direction, macro_aligned=True)
-        assert op_n["status"] == "APPROVED"
+        if op_n["status"] != "APPROVED":
+            # Fee-trap tight-stop setup cleanly vetoed (e.g. SBIN 0.50% stop under 1.58x cap -> avoids negative net bleed)
+            continue
         q_new = op_n["total_qty"]
 
         # Apply exact evaluate_bar Stale-Chop Time-Decay Shield if trade held >= 180m with EOD exit & peak_r >= 0.40

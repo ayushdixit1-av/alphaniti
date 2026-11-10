@@ -56,15 +56,53 @@ class EmapiExecutionFSM:
     """
 
     def __init__(self, wal_path: Optional[Path] = None):
-        self.wal_path = wal_path
+        self.wal_path = Path(wal_path) if wal_path is not None else None
         self.orders: Dict[str, Dict[str, Any]] = {}
         self.idempotent_order_registry: set = set()
+        self._load_wal()
 
     def _write_wal(self, record: Dict[str, Any]):
-        """Synchronously append order event to WAL."""
+        """Synchronously append and flush order event to WAL."""
         if self.wal_path:
+            self.wal_path.parent.mkdir(parents=True, exist_ok=True)
             with open(self.wal_path, "a", encoding="utf-8") as f:
-                f.write(json.dumps(record) + "\n")
+                f.write(json.dumps(record, default=str) + "\n")
+                f.flush()
+
+    def _load_wal(self):
+        """Replay WAL events from disk so ClOrdID idempotency and order state survive restarts."""
+        if not self.wal_path or not self.wal_path.exists():
+            return
+        with open(self.wal_path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                ev = rec.get("event")
+                if ev == "PREPARE_NEW_ORDER":
+                    order = dict(rec.get("order") or {})
+                    cid = order.get("cl_ord_id")
+                    if cid:
+                        self.orders[cid] = order
+                        self.idempotent_order_registry.add(cid)
+                elif ev == "EXECUTION_REPORT":
+                    cid = rec.get("cl_ord_id")
+                    if cid in self.orders:
+                        self.orders[cid]["status"] = rec.get("status", self.orders[cid].get("status"))
+                        self.orders[cid]["cum_qty"] = rec.get("cum_qty", self.orders[cid].get("cum_qty", 0))
+                        self.orders[cid]["leaves_qty"] = rec.get("leaves_qty", self.orders[cid].get("leaves_qty", 0))
+                elif ev == "SOCKET_DISCONNECT_FREEZE":
+                    cid = rec.get("cl_ord_id")
+                    if cid in self.orders:
+                        self.orders[cid]["status"] = FixOrdStatus.SUBMITTED_UNCONFIRMED
+                elif ev == "RECONCILED":
+                    cid = rec.get("cl_ord_id")
+                    if cid in self.orders:
+                        self.orders[cid]["status"] = rec.get("final_status", self.orders[cid].get("status"))
 
     def submit_new_order_single(
         self,
