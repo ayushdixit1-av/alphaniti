@@ -271,6 +271,10 @@ export const SuperChart: React.FC<SuperChartProps> = ({
         rightOffset: 10,
         barSpacing: 7,
         minBarSpacing: 2,
+        tickMarkFormatter: (t: number) => {
+          const d = new Date((t + 19800) * 1000);
+          return timeframe === 'D' ? d.toISOString().slice(0, 10) : d.toISOString().slice(11, 16);
+        },
       },
     });
 
@@ -380,6 +384,12 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     chartRef.current.applyOptions({
       crosshair: {
         mode: magnetMode ? CrosshairMode.Magnet : CrosshairMode.Normal,
+      },
+      timeScale: {
+        tickMarkFormatter: (t: number) => {
+          const d = new Date((t + 19800) * 1000);
+          return timeframe === 'D' ? d.toISOString().slice(0, 10) : d.toISOString().slice(11, 16);
+        },
       },
       localization: {
         timeFormatter: (t: number) => {

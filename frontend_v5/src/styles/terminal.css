@@ -66,14 +66,14 @@ body,
 
 /* Top Command Rail */
 .top-rail {
-  height: 48px;
+  height: 46px;
   background: rgba(10, 16, 25, 0.96);
   border-bottom: 1px solid var(--border-subtle);
-  padding: 0 14px;
+  padding: 0 10px;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 10px;
+  gap: 8px;
   position: sticky;
   top: 0;
   z-index: 60;
@@ -123,7 +123,7 @@ body,
 .top-pills {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 6px;
   overflow-x: auto;
   scrollbar-width: none;
 }
@@ -131,13 +131,13 @@ body,
 .pill {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
-  padding: 4px 10px;
+  gap: 5px;
+  padding: 3px 8px;
   border-radius: 7px;
   border: 1px solid var(--border-subtle);
   background: rgba(13, 21, 34, 0.9);
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: 10.5px;
   font-weight: 600;
   white-space: nowrap;
   color: var(--text-main);
@@ -190,15 +190,15 @@ body,
 .search-trigger {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 5px 11px;
+  gap: 6px;
+  padding: 4px 9px;
   border-radius: 7px;
   border: 1px solid var(--border-subtle);
   background: rgba(13, 21, 34, 0.95);
   color: var(--text-muted);
-  font-size: 11.5px;
+  font-size: 11px;
   cursor: pointer;
-  min-width: 155px;
+  min-width: 120px;
   transition: border-color 0.15s;
 }
 
@@ -300,6 +300,7 @@ body,
 .workspace-tabs {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 6px;
 }
 
@@ -355,7 +356,7 @@ body,
 /* Row 1: Execution Cockpit 3-Column Hero */
 .cockpit-row1 {
   display: grid;
-  grid-template-columns: 242px minmax(0, 1fr) 310px;
+  grid-template-columns: 258px minmax(0, 1fr) 310px;
   gap: 8px;
   min-height: 430px;
 }
@@ -365,12 +366,12 @@ body,
   width: 100%;
   border-collapse: collapse;
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: 11px;
 }
 
 .watchlist-table th {
   text-align: left;
-  padding: 6px 10px;
+  padding: 6px 8px;
   font-size: 10px;
   font-weight: 600;
   color: var(--text-dim);
@@ -378,7 +379,7 @@ body,
 }
 
 .watchlist-table td {
-  padding: 7px 10px;
+  padding: 6px 8px;
   border-bottom: 1px solid rgba(148, 163, 184, 0.05);
   cursor: pointer;
 }
@@ -495,6 +496,18 @@ body,
   gap: 8px;
 }
 
+.split-2-col {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  gap: 8px;
+}
+
+.split-even-col {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
 .factor-row {
   display: grid;
   grid-template-columns: 64px 1fr 24px;
@@ -579,6 +592,13 @@ body,
   }
   .cockpit-row2 {
     grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 960px) {
+  .split-2-col,
+  .split-even-col {
+    grid-template-columns: 1fr;
   }
 }
 

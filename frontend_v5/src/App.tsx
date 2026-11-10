@@ -256,7 +256,7 @@ export function App() {
             <span>NSE</span>
             <span style={{ color: 'var(--text-dim)' }}>|</span>
             <span style={{ color: 'var(--text-muted)' }}>
-              {ms?.is_holiday ? ms?.holiday_name?.split('(')[0].trim() : ms?.last_active_date || sessionDate}
+              {ms?.is_holiday ? (ms?.holiday_name?.split('(')[0].trim().slice(0, 14) || 'Holiday') : ms?.last_active_date || sessionDate}
             </span>
           </div>
 

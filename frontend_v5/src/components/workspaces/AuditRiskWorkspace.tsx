@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { Calendar, FileSpreadsheet, TrendingUp } from 'lucide-react';
+import React, { useMemo, useState } from 'react';
+import { Calendar, CheckCircle2, Clock, FileSpreadsheet, TrendingUp, XCircle } from 'lucide-react';
 import { AuditLedgerResponse, LiveEngineStatus, PremarketMacroResponse } from '../../types/api';
 
 interface AuditRiskWorkspaceProps {
@@ -9,53 +9,168 @@ interface AuditRiskWorkspaceProps {
   onInspectSymbol: (sym: string) => void;
 }
 
+function parseRs(val: any): number {
+  if (typeof val === 'number') return val;
+  if (!val) return 0;
+  const cleaned = String(val).replace(/[₹,+\s]/g, '').replace(/\(.*\)/, '');
+  const n = parseFloat(cleaned);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
   auditLedger,
   onInspectSymbol,
 }) => {
-  const [auditDate, setAuditDate] = useState(auditLedger?.date || '2026-11-09');
+  const [auditDate, setAuditDate] = useState('2026-11-04');
   const [historicalResult, setHistoricalResult] = useState<any>(null);
+  const [viewMode, setViewMode] = useState<'SESSION' | 'HISTORICAL'>('SESSION');
   const [loadingDate, setLoadingDate] = useState(false);
+  const [dateError, setDateError] = useState<string | null>(null);
   const [hoverPointIdx, setHoverPointIdx] = useState<number | null>(null);
-
-  const trades = auditLedger?.trades || [];
-  const perf = auditLedger?.performance_analytics;
-  const startCap = perf?.starting_capital_rs ?? auditLedger?.summary?.starting_capital ?? 8382.07;
-  const totalGross = perf?.gross_pnl_rs ?? trades.reduce((acc, t) => acc + t.gross_pnl, 0);
-  const totalFees = perf?.statutory_charges_rs ?? trades.reduce((acc, t) => acc + t.fees, 0);
-  const totalNet = perf?.net_pnl_after_charges_rs ?? trades.reduce((acc, t) => acc + t.net_pnl, 0);
-  const returnPct = perf?.return_pct ?? (startCap > 0 ? (totalNet / startCap) * 100 : 0);
-  const winsCount = perf?.wins ?? trades.filter((t) => t.net_pnl > 0).length;
-  const lossesCount = perf?.losses ?? trades.filter((t) => t.net_pnl < 0).length;
-  const winRatePct = perf?.win_rate_pct ?? (trades.length > 0 ? (winsCount / trades.length) * 100 : 0);
-  const avgWinRs = perf?.avg_win_rs ?? 0;
-  const avgLossRs = perf?.avg_loss_rs ?? 0;
-  const profitFactor = perf?.profit_factor;
-  const expectancyRs = perf?.expectancy_rs ?? (trades.length > 0 ? totalNet / trades.length : 0);
-  const expectancyR = perf?.expectancy_r ?? 0;
-  const maxDdRs = perf?.max_drawdown_rs ?? 0;
-  const maxDdPct = perf?.max_drawdown_pct ?? 0;
-  const eqCurve = perf?.equity_curve || [];
-  const compMatrix = auditLedger?.comparative_matrix
-    ? Object.entries(auditLedger.comparative_matrix)
-    : [];
 
   const runDateAudit = async (dateStr: string) => {
     setLoadingDate(true);
+    setDateError(null);
     try {
       const resp = await fetch(`/api/audit_date?date=${encodeURIComponent(dateStr)}`);
-      if (resp.ok) {
-        setHistoricalResult(await resp.json());
+      if (!resp.ok) {
+        setDateError(`HTTP ${resp.status} while querying ${dateStr}`);
+        return;
       }
+      const data = await resp.json();
+      if (!data.success) {
+        setDateError(data.error || `No trading session data available for ${dateStr}`);
+        return;
+      }
+      setHistoricalResult(data);
+      setViewMode('HISTORICAL');
+      setHoverPointIdx(null);
+    } catch (err: any) {
+      setDateError(err?.message || 'Network error querying historical audit');
     } finally {
       setLoadingDate(false);
     }
   };
 
+  // Convert historicalResult into structured Performance Analytics + Equity Curve + Trades
+  const historicalAnalytics = useMemo(() => {
+    if (!historicalResult || !historicalResult.success) return null;
+    const cap = Number(historicalResult.capital || 50000);
+    const cross: any[] = historicalResult.cross_sectional || [];
+    const lifecycle: any[] = historicalResult.lifecycle_execution || [];
+
+    const findParam = (kw: string) =>
+      lifecycle.find((r) => String(r.param || '').toLowerCase().includes(kw))?.value;
+
+    const primaryGross = parseRs(findParam('gross trading'));
+    const primaryFees = parseRs(findParam('statutory fees'));
+    const primaryNet = Number(historicalResult.net_pnl ?? parseRs(findParam('net realized')));
+
+    const legPnls = cross.map((c) => parseRs(c.net_pnl));
+    const legsToAnalyze = legPnls.length > 0 ? legPnls : [primaryNet];
+    const winsArr = legsToAnalyze.filter((v) => v > 0);
+    const lossArr = legsToAnalyze.filter((v) => v < 0);
+    const netSum = cross.length > 0 ? legsToAnalyze.reduce((a, b) => a + b, 0) : primaryNet;
+    const winSum = winsArr.reduce((a, b) => a + b, 0);
+    const lossAbs = Math.abs(lossArr.reduce((a, b) => a + b, 0));
+
+    let cum = 0;
+    let peak = 0;
+    let maxDdRs = 0;
+    let maxDdPct = 0;
+    const curve = [
+      { time: '09:15', symbol: 'START', trade_net: 0, cum_net: 0, equity: cap, drawdown_rs: 0, drawdown_pct: 0 },
+    ];
+
+    if (cross.length > 0) {
+      cross.forEach((c) => {
+        const netV = parseRs(c.net_pnl);
+        cum = Number((cum + netV).toFixed(2));
+        if (cum > peak) peak = cum;
+        const dd = Number((cum - peak).toFixed(2));
+        const ddPct = cap + peak > 0 ? Number(((dd / (cap + peak)) * 100).toFixed(2)) : 0;
+        if (dd < maxDdRs) {
+          maxDdRs = dd;
+          maxDdPct = ddPct;
+        }
+        curve.push({
+          time: String(c.exit_time || '10:30'),
+          symbol: String(c.candidate || '').split(' ')[0],
+          trade_net: netV,
+          cum_net: cum,
+          equity: Number((cap + cum).toFixed(2)),
+          drawdown_rs: dd,
+          drawdown_pct: ddPct,
+        });
+      });
+    } else {
+      curve.push({
+        time: '15:15',
+        symbol: historicalResult.top_pick?.symbol || 'TRADE',
+        trade_net: primaryNet,
+        cum_net: primaryNet,
+        equity: Number((cap + primaryNet).toFixed(2)),
+        drawdown_rs: Math.min(0, primaryNet),
+        drawdown_pct: cap > 0 ? Number(((Math.min(0, primaryNet) / cap) * 100).toFixed(2)) : 0,
+      });
+    }
+
+    const totalN = legsToAnalyze.length;
+    const avgW = winsArr.length > 0 ? winSum / winsArr.length : 0;
+    const avgL = lossArr.length > 0 ? -lossAbs / lossArr.length : 0;
+
+    return {
+      date: historicalResult.date,
+      startCap: cap,
+      totalGross: cross.length > 0 ? netSum + primaryFees * cross.length : primaryGross,
+      totalFees: cross.length > 0 ? primaryFees * cross.length : primaryFees,
+      totalNet: cross.length > 0 ? netSum : primaryNet,
+      returnPct: cap > 0 ? ((cross.length > 0 ? netSum : primaryNet) / cap) * 100 : 0,
+      winsCount: winsArr.length,
+      lossesCount: lossArr.length,
+      totalTrades: totalN,
+      winRatePct: totalN > 0 ? (winsArr.length / totalN) * 100 : 0,
+      avgWinRs: avgW,
+      avgLossRs: avgL,
+      profitFactor: lossAbs > 0 ? winSum / lossAbs : winsArr.length > 0 ? 99.99 : null,
+      payoffRatio: avgL < 0 ? avgW / Math.abs(avgL) : winsArr.length > 0 ? 99.99 : null,
+      expectancyRs: totalN > 0 ? netSum / totalN : 0,
+      maxDdRs,
+      maxDdPct,
+      eqCurve: curve,
+    };
+  }, [historicalResult]);
+
+  // Select active metrics source (Session vs Audited Historical Date)
+  const trades = auditLedger?.trades || [];
+  const perf = auditLedger?.performance_analytics;
+  const useHist = viewMode === 'HISTORICAL' && historicalAnalytics !== null;
+
+  const activeLabel = useHist ? `Historical ${historicalAnalytics!.date}` : auditLedger?.date || 'Session';
+  const startCap = useHist ? historicalAnalytics!.startCap : perf?.starting_capital_rs ?? auditLedger?.summary?.starting_capital ?? 8382.07;
+  const totalGross = useHist ? historicalAnalytics!.totalGross : perf?.gross_pnl_rs ?? trades.reduce((acc, t) => acc + t.gross_pnl, 0);
+  const totalFees = useHist ? historicalAnalytics!.totalFees : perf?.statutory_charges_rs ?? trades.reduce((acc, t) => acc + t.fees, 0);
+  const totalNet = useHist ? historicalAnalytics!.totalNet : perf?.net_pnl_after_charges_rs ?? trades.reduce((acc, t) => acc + t.net_pnl, 0);
+  const returnPct = useHist ? historicalAnalytics!.returnPct : perf?.return_pct ?? (startCap > 0 ? (totalNet / startCap) * 100 : 0);
+  const winsCount = useHist ? historicalAnalytics!.winsCount : perf?.wins ?? trades.filter((t) => t.net_pnl > 0).length;
+  const lossesCount = useHist ? historicalAnalytics!.lossesCount : perf?.losses ?? trades.filter((t) => t.net_pnl < 0).length;
+  const totalTrades = useHist ? historicalAnalytics!.totalTrades : trades.length;
+  const winRatePct = useHist ? historicalAnalytics!.winRatePct : perf?.win_rate_pct ?? (trades.length > 0 ? (winsCount / trades.length) * 100 : 0);
+  const avgWinRs = useHist ? historicalAnalytics!.avgWinRs : perf?.avg_win_rs ?? 0;
+  const avgLossRs = useHist ? historicalAnalytics!.avgLossRs : perf?.avg_loss_rs ?? 0;
+  const profitFactor = useHist ? historicalAnalytics!.profitFactor : perf?.profit_factor;
+  const payoffRatio = useHist ? historicalAnalytics!.payoffRatio : perf?.payoff_ratio;
+  const expectancyRs = useHist ? historicalAnalytics!.expectancyRs : perf?.expectancy_rs ?? (trades.length > 0 ? totalNet / trades.length : 0);
+  const expectancyR = useHist ? (expectancyRs / Math.max(1, startCap * 0.015)) : perf?.expectancy_r ?? 0;
+  const maxDdRs = useHist ? historicalAnalytics!.maxDdRs : perf?.max_drawdown_rs ?? 0;
+  const maxDdPct = useHist ? historicalAnalytics!.maxDdPct : perf?.max_drawdown_pct ?? 0;
+  const eqCurve = useHist ? historicalAnalytics!.eqCurve : perf?.equity_curve || [];
+  const compMatrix = auditLedger?.comparative_matrix ? Object.entries(auditLedger.comparative_matrix) : [];
+
   // Equity curve SVG geometry
   const w = 680;
   const h = 190;
-  const padL = 54;
+  const padL = 56;
   const padR = 18;
   const padT = 18;
   const padB = 24;
@@ -79,14 +194,64 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
-      {/* TOP: 7 Performance Analytics KPI Strip */}
-      <div
-        style={{
-          display: 'grid',
-          gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))',
-          gap: 8,
-        }}
-      >
+      {/* TOP BAR: Session vs Historical Mode Switch + 5Y Date Auditor Controls */}
+      <div className="panel-card" style={{ padding: '8px 12px' }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ fontSize: 11.5, color: 'var(--text-muted)', fontWeight: 700 }}>Audit Source:</span>
+            <button
+              className={`tf-btn ${viewMode === 'SESSION' ? 'active' : ''}`}
+              style={{ border: '1px solid var(--border-subtle)' }}
+              onClick={() => setViewMode('SESSION')}
+            >
+              Active Session ({auditLedger?.date || '2026-11-09'})
+            </button>
+            {historicalAnalytics && (
+              <button
+                className={`tf-btn ${viewMode === 'HISTORICAL' ? 'active' : ''}`}
+                style={{ border: '1px solid rgba(56,189,248,0.4)' }}
+                onClick={() => setViewMode('HISTORICAL')}
+              >
+                Historical Audit ({historicalAnalytics.date})
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+            <Calendar size={14} color="var(--accent-cyan)" />
+            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>5-Year Historical Auditor:</span>
+            <input
+              type="date"
+              value={auditDate}
+              onChange={(e) => setAuditDate(e.target.value)}
+              style={{
+                background: '#060a11',
+                color: 'var(--text-main)',
+                border: '1px solid var(--border-subtle)',
+                borderRadius: 5,
+                padding: '3px 8px',
+                fontFamily: 'var(--mono)',
+                fontSize: 11,
+              }}
+            />
+            <button
+              className="tf-btn active"
+              onClick={() => runDateAudit(auditDate)}
+              disabled={loadingDate}
+            >
+              {loadingDate ? 'Auditing...' : 'Run Date Audit'}
+            </button>
+          </div>
+        </div>
+        {dateError && (
+          <div className="mono" style={{ marginTop: 6, fontSize: 11, color: 'var(--accent-amber)' }}>
+            {dateError}
+          </div>
+        )}
+      </div>
+
+      {/* 6 PERFORMANCE ANALYTICS KPI CARDS (Dynamically tracks Session OR Historical Audit) */}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(175px, 1fr))', gap: 8 }}>
         <div className="panel-card" style={{ padding: '9px 12px', gap: 3 }}>
           <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>NET P&amp;L (AFTER CHARGES)</div>
           <div className="mono" style={{ fontSize: 18, fontWeight: 800, color: totalNet >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
@@ -94,7 +259,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
             <span style={{ fontSize: 11.5 }}>({returnPct >= 0 ? '+' : ''}{returnPct.toFixed(2)}%)</span>
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
-            Gross +₹{totalGross.toFixed(2)} − Fees ₹{totalFees.toFixed(2)}
+            Gross +₹{totalGross.toFixed(2)} − Charges ₹{totalFees.toFixed(2)}
           </div>
         </div>
 
@@ -104,7 +269,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
             {profitFactor != null ? `${profitFactor.toFixed(2)}x` : '--'}
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
-            Payoff Ratio: {perf?.payoff_ratio != null ? `${perf.payoff_ratio.toFixed(2)}x` : '--'}
+            Payoff Ratio: {payoffRatio != null ? `${payoffRatio.toFixed(2)}x` : '--'}
           </div>
         </div>
 
@@ -114,7 +279,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
             {expectancyRs >= 0 ? '+' : ''}₹{expectancyRs.toFixed(2)}
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
-            Mean R-Multiple: {expectancyR >= 0 ? '+' : ''}{expectancyR.toFixed(2)}R / trade
+            Mean R-Multiple: {expectancyR >= 0 ? '+' : ''}{expectancyR.toFixed(2)}R / leg
           </div>
         </div>
 
@@ -125,7 +290,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
             <strong style={{ color: 'var(--accent-green)' }}>{winsCount} Wins</strong> •{' '}
-            <strong style={{ color: 'var(--accent-red)' }}>{lossesCount} Loss</strong> ({trades.length} Total)
+            <strong style={{ color: 'var(--accent-red)' }}>{lossesCount} Loss</strong> ({totalTrades} Legs)
           </div>
         </div>
 
@@ -137,7 +302,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
             <span style={{ color: 'var(--accent-red)' }}>-₹{Math.abs(avgLossRs).toFixed(2)}</span>
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
-            Net realization per win/loss leg
+            Net realization per win/loss
           </div>
         </div>
 
@@ -148,19 +313,18 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
             <span style={{ fontSize: 11.5 }}>({maxDdPct.toFixed(2)}%)</span>
           </div>
           <div className="mono" style={{ fontSize: 9.5, color: 'var(--text-dim)' }}>
-            Start ₹{startCap.toFixed(2)} ➔ End ₹{(startCap + totalNet).toFixed(2)}
+            Start ₹{startCap.toFixed(0)} ➔ End ₹{(startCap + totalNet).toFixed(0)}
           </div>
         </div>
       </div>
 
-      {/* MIDDLE: Interactive Equity Curve Chart + Strategy Comparison & 5Y Date Auditor */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.35fr 1fr', gap: 8 }}>
-        {/* Left: Full Equity Curve */}
+      {/* EQUITY CURVE + RIGHT ATTRIBUTION OR HISTORICAL GATES */}
+      <div className="split-2-col">
         <div className="panel-card">
           <div className="panel-head">
             <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
               <TrendingUp size={14} color="var(--accent-green)" />
-              Intraday Equity Curve After Statutory Charges ({auditLedger?.date || 'Session'})
+              Equity Curve After Statutory Charges ({activeLabel})
             </span>
             <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-green)' }}>
               {hovered
@@ -181,8 +345,6 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
                   <stop offset="100%" stopColor="#10b981" stopOpacity="0.0" />
                 </linearGradient>
               </defs>
-
-              {/* Starting capital baseline */}
               <line
                 x1={padL}
                 x2={w - padR}
@@ -221,7 +383,7 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
                     fontSize="8.5"
                     fontFamily="JetBrains Mono"
                   >
-                    {pt.time}
+                    {pt.symbol === 'START' ? pt.time : pt.symbol}
                   </text>
                 </g>
               ))}
@@ -229,136 +391,199 @@ export const AuditRiskWorkspace: React.FC<AuditRiskWorkspaceProps> = ({
           </div>
         </div>
 
-        {/* Right: Comparative Matrix + 5Y Historical Date Auditor */}
-        <div className="panel-card" style={{ padding: 12, gap: 8 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <span style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
-              <FileSpreadsheet size={14} color="var(--accent-cyan)" />
-              Architecture Attribution &amp; 5Y Date Auditor
-            </span>
+        {/* Right Panel: Historical Gates Breakdown (when Historical) OR Architecture Comparison (when Session) */}
+        {useHist && historicalResult ? (
+          <div className="panel-card" style={{ padding: 12, gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                {historicalResult.gates?.all_passed ? (
+                  <CheckCircle2 size={14} color="var(--accent-green)" />
+                ) : (
+                  <XCircle size={14} color="var(--accent-amber)" />
+                )}
+                Microstructure Gates — {historicalResult.date}
+              </span>
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-cyan)' }}>
+                Top Pick: {historicalResult.top_pick?.symbol || '--'}
+              </span>
+            </div>
+
+            <div style={{ fontSize: 11, color: '#cbd5e1', background: '#060a11', padding: '7px 9px', borderRadius: 6, border: '1px solid var(--border-subtle)' }}>
+              {historicalResult.crucial_observation}
+            </div>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 10.5 }} className="mono">
+              {Object.entries(historicalResult.gates || {})
+                .filter(([k]) => k !== 'all_passed')
+                .map(([gateKey, gateMsg]) => {
+                  const passed = String(gateMsg).includes('PASS');
+                  return (
+                    <div key={gateKey} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: '1px solid rgba(148,163,184,0.06)', paddingBottom: 3 }}>
+                      <span style={{ color: 'var(--text-dim)', textTransform: 'uppercase' }}>{gateKey.replace(/_/g, ' ')}</span>
+                      <span style={{ color: passed ? 'var(--accent-green)' : 'var(--accent-amber)', textAlign: 'right' }}>
+                        {String(gateMsg)}
+                      </span>
+                    </div>
+                  );
+                })}
+            </div>
+          </div>
+        ) : (
+          <div className="panel-card" style={{ padding: 12, gap: 8 }}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+              <span style={{ fontSize: 12, fontWeight: 700, display: 'flex', alignItems: 'center', gap: 6 }}>
+                <FileSpreadsheet size={14} color="var(--accent-cyan)" />
+                Architecture Attribution Matrix
+              </span>
+            </div>
+
+            {compMatrix.length > 0 && (
+              <table className="watchlist-table" style={{ fontSize: 11 }}>
+                <thead>
+                  <tr>
+                    <th>Architecture Mode</th>
+                    <th style={{ textAlign: 'right' }}>Trades</th>
+                    <th style={{ textAlign: 'right' }}>Net Cash</th>
+                    <th style={{ textAlign: 'right' }}>Balance</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {compMatrix.map(([name, m]) => (
+                    <tr key={name} style={{ background: name.includes('All-Weather') ? 'rgba(16,185,129,0.08)' : undefined }}>
+                      <td style={{ fontWeight: name.includes('All-Weather') ? 700 : 500 }}>{name}</td>
+                      <td style={{ textAlign: 'right' }}>{m.trades}</td>
+                      <td style={{ textAlign: 'right', fontWeight: 700, color: m.net_pnl_rs > 0 ? 'var(--accent-green)' : m.net_pnl_rs < 0 ? 'var(--accent-red)' : 'var(--text-muted)' }}>
+                        {m.net_pnl_rs >= 0 ? '+' : ''}₹{m.net_pnl_rs.toFixed(2)}
+                      </td>
+                      <td style={{ textAlign: 'right' }}>₹{m.ending_balance.toFixed(2)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )}
+      </div>
+
+      {/* BOTTOM TABLE + TIMELINE */}
+      {useHist && historicalResult ? (
+        <div className="split-2-col">
+          {/* Left: Structured Cross-Sectional Portfolio & Universe Table */}
+          <div className="panel-card">
+            <div className="panel-head">
+              <span>Cross-Sectional Audited Executions ({historicalResult.date})</span>
+              <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-green)' }}>
+                Primary #1 Pick Net: ₹{Number(historicalResult.net_pnl || 0).toFixed(2)}
+              </span>
+            </div>
+            <div style={{ overflowX: 'auto' }}>
+              <table className="watchlist-table">
+                <thead>
+                  <tr>
+                    <th>Candidate</th>
+                    <th>Entry</th>
+                    <th>Exit</th>
+                    <th>Time</th>
+                    <th>Reason</th>
+                    <th style={{ textAlign: 'right' }}>Day Ret</th>
+                    <th style={{ textAlign: 'right' }}>Net PnL</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {(historicalResult.cross_sectional || []).map((c: any, idx: number) => {
+                    const pnlVal = parseRs(c.net_pnl);
+                    const rawSym = String(c.candidate || '').split(' ')[0];
+                    return (
+                      <tr key={idx} className="watchlist-row" onClick={() => onInspectSymbol(rawSym)}>
+                        <td style={{ fontWeight: 700 }}>{c.candidate}</td>
+                        <td>{c.entry_price}</td>
+                        <td>{c.exit_price}</td>
+                        <td>{c.exit_time}</td>
+                        <td style={{ fontSize: 10, color: 'var(--text-muted)' }}>{c.exit_reason}</td>
+                        <td style={{ textAlign: 'right', color: String(c.current_return).includes('-') ? 'var(--accent-red)' : 'var(--accent-green)' }}>
+                          {c.current_return}
+                        </td>
+                        <td style={{ textAlign: 'right', fontWeight: 700, color: pnlVal >= 0 ? 'var(--accent-green)' : 'var(--accent-red)' }}>
+                          {c.net_pnl}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
 
-          {compMatrix.length > 0 && (
-            <table className="watchlist-table" style={{ fontSize: 10.5 }}>
+          {/* Right: Structured Forensic Intraday Timeline */}
+          <div className="panel-card">
+            <div className="panel-head">
+              <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <Clock size={13} color="var(--accent-cyan)" />
+                Intraday Forensic Timeline ({historicalResult.date})
+              </span>
+            </div>
+            <div style={{ maxHeight: 270, overflowY: 'auto', padding: '8px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {(historicalResult.timeline || []).map((ev: any, i: number) => (
+                <div key={i} style={{ borderLeft: '2px solid var(--accent-cyan)', paddingLeft: 10 }}>
+                  <div className="mono" style={{ fontSize: 10, color: 'var(--accent-cyan)', fontWeight: 700 }}>
+                    {ev.time} • {ev.title}
+                  </div>
+                  <div style={{ fontSize: 11, color: 'var(--text-muted)', marginTop: 2 }}>{ev.desc}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div className="panel-card">
+          <div className="panel-head">
+            <span>Verified Execution Audit Ledger ({trades.length} Trades • {winRatePct.toFixed(1)}% Win Rate • Net +₹{totalNet.toFixed(2)})</span>
+            <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-green)' }}>
+              Capital: ₹{startCap.toFixed(2)} ➔ ₹{(startCap + totalNet).toFixed(2)}
+            </span>
+          </div>
+          <div style={{ overflowX: 'auto' }}>
+            <table className="watchlist-table">
               <thead>
                 <tr>
-                  <th>Architecture Mode</th>
-                  <th style={{ textAlign: 'right' }}>Trades</th>
+                  <th>Symbol</th>
+                  <th>Strategy</th>
+                  <th>Entry</th>
+                  <th>Exit</th>
+                  <th>Exit Reason</th>
+                  <th style={{ textAlign: 'right' }}>Peak R</th>
+                  <th style={{ textAlign: 'right' }}>Gross</th>
+                  <th style={{ textAlign: 'right' }}>Charges</th>
                   <th style={{ textAlign: 'right' }}>Net Cash</th>
                 </tr>
               </thead>
               <tbody>
-                {compMatrix.map(([name, m]) => (
-                  <tr key={name} style={{ background: name.includes('All-Weather') ? 'rgba(16,185,129,0.08)' : undefined }}>
-                    <td style={{ fontWeight: name.includes('All-Weather') ? 700 : 500 }}>{name}</td>
-                    <td style={{ textAlign: 'right' }}>{m.trades}</td>
-                    <td style={{ textAlign: 'right', fontWeight: 700, color: m.net_pnl_rs > 0 ? 'var(--accent-green)' : m.net_pnl_rs < 0 ? 'var(--accent-red)' : 'var(--text-muted)' }}>
-                      {m.net_pnl_rs >= 0 ? '+' : ''}₹{m.net_pnl_rs.toFixed(2)}
+                {trades.map((t, i) => (
+                  <tr key={`${t.symbol}-${i}`} className="watchlist-row" onClick={() => onInspectSymbol(t.symbol)}>
+                    <td style={{ fontWeight: 800 }}>{t.symbol}</td>
+                    <td style={{ fontSize: 10, color: 'var(--accent-cyan)' }}>{t.strategy}</td>
+                    <td>{t.entry_time} @ ₹{t.entry_price.toFixed(2)}</td>
+                    <td>{t.exit_time} @ ₹{t.exit_price.toFixed(2)}</td>
+                    <td style={{ fontSize: 10, color: 'var(--text-muted)' }}>{t.exit_reason}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--accent-cyan)' }}>+{t.peak_r.toFixed(2)}R</td>
+                    <td style={{ textAlign: 'right' }}>₹{t.gross_pnl.toFixed(2)}</td>
+                    <td style={{ textAlign: 'right', color: 'var(--accent-amber)' }}>-₹{t.fees.toFixed(2)}</td>
+                    <td
+                      style={{
+                        textAlign: 'right',
+                        fontWeight: 800,
+                        color: t.net_pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
+                      }}
+                    >
+                      {t.net_pnl >= 0 ? '+' : ''}₹{t.net_pnl.toFixed(2)} ({t.r_multiple}R)
                     </td>
                   </tr>
                 ))}
               </tbody>
             </table>
-          )}
-
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 4, flexWrap: 'wrap' }}>
-            <Calendar size={14} color="var(--accent-cyan)" />
-            <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>Historical Audit:</span>
-            <input
-              type="date"
-              value={auditDate}
-              onChange={(e) => setAuditDate(e.target.value)}
-              style={{
-                background: '#060a11',
-                color: 'var(--text-main)',
-                border: '1px solid var(--border-subtle)',
-                borderRadius: 5,
-                padding: '3px 8px',
-                fontFamily: 'var(--mono)',
-                fontSize: 11,
-              }}
-            />
-            <button
-              className="tf-btn active"
-              onClick={() => runDateAudit(auditDate)}
-              disabled={loadingDate}
-            >
-              {loadingDate ? 'Auditing...' : 'Run Date Audit'}
-            </button>
           </div>
-
-          {historicalResult && (
-            <div
-              className="mono"
-              style={{
-                background: '#05080f',
-                padding: 8,
-                borderRadius: 6,
-                border: '1px solid var(--border-subtle)',
-                fontSize: 10.5,
-                maxHeight: 82,
-                overflowY: 'auto',
-              }}
-            >
-              {JSON.stringify(historicalResult)}
-            </div>
-          )}
         </div>
-      </div>
-
-      {/* Full Verified Execution Ledger */}
-      <div className="panel-card">
-        <div className="panel-head">
-          <span>Verified Execution Audit Ledger ({trades.length} Trades • {winRatePct.toFixed(1)}% Win Rate • Net +₹{totalNet.toFixed(2)})</span>
-          <span className="mono" style={{ fontSize: 10.5, color: 'var(--accent-green)' }}>
-            Capital: ₹{startCap.toFixed(2)} ➔ ₹{(startCap + totalNet).toFixed(2)}
-          </span>
-        </div>
-        <div style={{ overflowX: 'auto' }}>
-          <table className="watchlist-table">
-            <thead>
-              <tr>
-                <th>Symbol</th>
-                <th>Strategy</th>
-                <th>Entry</th>
-                <th>Exit</th>
-                <th>Exit Reason</th>
-                <th style={{ textAlign: 'right' }}>Peak R</th>
-                <th style={{ textAlign: 'right' }}>Gross</th>
-                <th style={{ textAlign: 'right' }}>Charges</th>
-                <th style={{ textAlign: 'right' }}>Net Cash</th>
-              </tr>
-            </thead>
-            <tbody>
-              {trades.map((t, i) => (
-                <tr key={`${t.symbol}-${i}`} className="watchlist-row" onClick={() => onInspectSymbol(t.symbol)}>
-                  <td style={{ fontWeight: 800 }}>{t.symbol}</td>
-                  <td style={{ fontSize: 10, color: 'var(--accent-cyan)' }}>{t.strategy}</td>
-                  <td>
-                    {t.entry_time} @ ₹{t.entry_price.toFixed(2)}
-                  </td>
-                  <td>
-                    {t.exit_time} @ ₹{t.exit_price.toFixed(2)}
-                  </td>
-                  <td style={{ fontSize: 10, color: 'var(--text-muted)' }}>{t.exit_reason}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--accent-cyan)' }}>+{t.peak_r.toFixed(2)}R</td>
-                  <td style={{ textAlign: 'right' }}>₹{t.gross_pnl.toFixed(2)}</td>
-                  <td style={{ textAlign: 'right', color: 'var(--accent-amber)' }}>-₹{t.fees.toFixed(2)}</td>
-                  <td
-                    style={{
-                      textAlign: 'right',
-                      fontWeight: 800,
-                      color: t.net_pnl >= 0 ? 'var(--accent-green)' : 'var(--accent-red)',
-                    }}
-                  >
-                    {t.net_pnl >= 0 ? '+' : ''}₹{t.net_pnl.toFixed(2)} ({t.r_multiple}R)
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      )}
     </div>
   );
 };

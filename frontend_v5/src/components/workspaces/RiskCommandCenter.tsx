@@ -228,7 +228,7 @@ export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
       </div>
 
       {/* MIDDLE ROW: Live Equity & Underwater Drawdown Chart + Margin & Pre-Flight Position Sizer */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.3fr 1fr', gap: 8 }}>
+      <div className="split-2-col">
         {/* Left: Equity + Underwater Drawdown Chart */}
         <div className="panel-card">
           <div className="panel-head">
@@ -405,7 +405,7 @@ export const RiskCommandCenter: React.FC<RiskCommandCenterProps> = ({
       </div>
 
       {/* BOTTOM ROW: Circuit Breakers Grid + 9-Stock NSE Circuit Band Proximity */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1.2fr 1fr', gap: 8 }}>
+      <div className="split-2-col">
         {/* 6 Live Circuit Breakers */}
         <div className="panel-card" style={{ padding: 12, gap: 8 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

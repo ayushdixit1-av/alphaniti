@@ -224,7 +224,7 @@ export const ReplayWorkspace: React.FC<ReplayWorkspaceProps> = ({
       </div>
 
       {/* Main Synced Replay Grid */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1.4fr) minmax(0, 1fr)', gap: 8 }}>
+      <div className="split-2-col">
         {/* Left: Synced SuperChart revealing candles bar-by-bar */}
         <div className="panel-card">
           <SuperChart
