@@ -445,3 +445,127 @@ def test_redteam_stale_quote_margin_r_multiple_and_mode_a_floor(tmp_path):
     assert daemon.state["account"]["mis_margin_used"] == 0.0
     assert daemon.state["account"]["available_margin"] == daemon.state["account"]["clear_cash"]
     assert "r_multiple" in daemon.state["trade_history"][-1]
+
+
+def test_redteam2_symmetric_live_broker_entry_sll_and_exit(tmp_path):
+    """
+    Verify ALPHANITI_LIVE_ORDERS=true executes symmetrically across entry, T1 partial, SL-L, and final close:
+      - Entry calls place_order(BUY) + get_order_status + arms exchange-native SL-L.
+      - T1 partial cancels old SL-L, sells q1_qty, and re-arms reduced SL-L for q2_qty.
+      - Final exit cancels residual SL-L and sells remaining q2_qty cleanly.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon.live_order_execution = True
+
+    calls = {"placed": [], "cancelled": []}
+
+    class _MockLiveGroww:
+        EXCHANGE_NSE = "NSE"
+        SEGMENT_CASH = "CASH"
+        PRODUCT_MIS = "MIS"
+        VALIDITY_DAY = "DAY"
+        ORDER_TYPE_LIMIT = "LIMIT"
+        ORDER_TYPE_STOP_LOSS = "SL"
+        TRANSACTION_TYPE_BUY = "BUY"
+        TRANSACTION_TYPE_SELL = "SELL"
+
+        def place_order(self, **kwargs):
+            oid = f"ORD-{len(calls['placed']) + 1}"
+            calls["placed"].append({"oid": oid, **kwargs})
+            return {"groww_order_id": oid}
+
+        def get_order_status(self, groww_order_id=None):
+            return {"order_status": "EXECUTED", "average_fill_price": 1000.0}
+
+        def cancel_order(self, groww_order_id=None, segment=None):
+            calls["cancelled"].append(groww_order_id)
+            return {"status": "CANCELLED"}
+
+    daemon.groww = _MockLiveGroww()
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1000.0, "open": 996.0, "day_high": 1001.0, "day_low": 995.0,
+        "volume": 50000, "l2_imbalance_pct": 25.0, "l2_live_available": False,
+        "last_quote_ts": time.time(),
+    }
+    t0 = datetime(2026, 11, 11, 10, 30, tzinfo=IST)
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
+
+    tr = daemon.state["active_trade"]
+    assert tr is not None
+    assert len(calls["placed"]) == 2  # 1: Entry BUY LIMIT, 2: Protective SL-L SELL
+    assert calls["placed"][0]["transaction_type"] == "BUY"
+    assert calls["placed"][1]["order_type"] == "SL"
+    assert tr["broker_order_id"] == "ORD-1"
+    assert tr["sl_order_id"] == "ORD-2"
+
+    # Trigger Target 1 partial exit -> cancels ORD-2, sells q1, re-arms ORD-4 SL-L for q2
+    q1, q2 = tr["q1_qty"], tr["q2_qty"]
+    daemon.state["market_data"]["SBIN"].update({
+        "ltp": tr["target_1_price"] + 0.5,
+        "bar_open": tr["target_1_price"],
+        "bar_high": tr["target_1_price"] + 0.5,
+        "bar_low": tr["target_1_price"] - 0.5,
+        "last_quote_ts": time.time(),
+    })
+    daemon.manage_active_trade(t0 + timedelta(minutes=2))
+    assert "ORD-2" in calls["cancelled"]
+    assert calls["placed"][2]["transaction_type"] == "SELL"
+    assert calls["placed"][2]["quantity"] == q1
+    if q2 > 0:
+        assert calls["placed"][3]["order_type"] == "SL"
+        assert calls["placed"][3]["quantity"] == q2
+
+        # Final EOD exit -> cancels ORD-4 and sells remaining q2
+        eod_t = datetime(2026, 11, 11, 15, 16, tzinfo=IST)
+        daemon.state["market_data"]["SBIN"]["last_quote_ts"] = time.time()
+        daemon.manage_active_trade(eod_t)
+        assert "ORD-4" in calls["cancelled"]
+        assert calls["placed"][-1]["transaction_type"] == "SELL"
+        assert calls["placed"][-1]["quantity"] == q2
+        assert daemon.state["active_trade"] is None
+
+
+def test_redteam2_minute_rollover_prev_bar_adverse_flow_and_history_archive(tmp_path):
+    """
+    Verify:
+      - _update_symbol_micro() exposes prev_bar_open / prev_bar_close on minute flips so
+        manage_active_trade() increments adverse_flow_bars even when current tick bar_open == ltp.
+      - New-day rollover archives yesterday's trade_history cleanly instead of leaking into today.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    t0 = datetime(2026, 11, 11, 10, 0, tzinfo=IST)
+    daemon.state["market_status"]["is_open"] = True
+
+    # Simulate entry on LONG SBIN @ 1000
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1000.0, "open": 998.0, "day_high": 1001.0, "day_low": 994.0,
+        "volume": 10000, "l2_imbalance_pct": 25.0, "l2_live_available": False,
+    }
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
+    assert daemon.state["active_trade"] is not None
+
+    # Minute 10:00 starts at 999.0 and drops to 997.0 (bearish close < open), then 10:01 opens at 997.0 (bar_open == ltp!)
+    daemon._update_symbol_micro("SBIN", 999.0, 10500, 1001.0, 994.0, t0 + timedelta(seconds=10))
+    daemon._update_symbol_micro("SBIN", 997.0, 11200, 1001.0, 994.0, t0 + timedelta(seconds=50))
+    micro_flip = daemon._update_symbol_micro("SBIN", 997.0, 11500, 1001.0, 994.0, t0 + timedelta(minutes=1, seconds=2))
+    assert micro_flip["bar_open"] == 997.0  # New minute opened right at ltp!
+    assert micro_flip["prev_bar_open"] == 999.0
+    assert micro_flip["prev_bar_close"] == 997.0
+
+    daemon.state["market_data"]["SBIN"].update({
+        **micro_flip,
+        "ltp": 997.0,
+        "l2_imbalance_pct": -35.0,
+        "last_quote_ts": time.time(),
+    })
+    daemon.manage_active_trade(t0 + timedelta(minutes=1, seconds=2))
+    assert daemon.state["active_trade"]["adverse_flow_bars"] == 1
+
+    # Archive test across day rollover in _restore_runtime_state
+    daemon.state["trade_history"] = [{"symbol": "SBIN", "net_pnl": 42.0}]
+    daemon._persist_runtime_state(now=t0)
+    daemon2 = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon2._restore_runtime_state(now=t0 + timedelta(days=1))
+    assert daemon2.state["trade_history"] == []
+    assert (tmp_path / "trade_history_2026-11-11.json").exists()
