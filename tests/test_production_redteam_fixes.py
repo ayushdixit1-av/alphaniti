@@ -457,7 +457,7 @@ def test_redteam2_symmetric_live_broker_entry_sll_and_exit(tmp_path):
     daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
     daemon.live_order_execution = True
 
-    calls = {"placed": [], "cancelled": []}
+    calls = {"placed": [], "cancelled": [], "statuses": {}}
 
     class _MockLiveGroww:
         EXCHANGE_NSE = "NSE"
@@ -472,13 +472,16 @@ def test_redteam2_symmetric_live_broker_entry_sll_and_exit(tmp_path):
         def place_order(self, **kwargs):
             oid = f"ORD-{len(calls['placed']) + 1}"
             calls["placed"].append({"oid": oid, **kwargs})
+            calls["statuses"][oid] = "TRIGGER_PENDING" if kwargs.get("order_type") == "SL" else "EXECUTED"
             return {"groww_order_id": oid}
 
         def get_order_status(self, groww_order_id=None):
-            return {"order_status": "EXECUTED", "average_fill_price": 1000.0}
+            st = calls["statuses"].get(groww_order_id, "EXECUTED")
+            return {"order_status": st, "average_fill_price": 1000.0 if st == "EXECUTED" else None}
 
         def cancel_order(self, groww_order_id=None, segment=None):
             calls["cancelled"].append(groww_order_id)
+            calls["statuses"][groww_order_id] = "CANCELLED"
             return {"status": "CANCELLED"}
 
     daemon.groww = _MockLiveGroww()
@@ -569,3 +572,124 @@ def test_redteam2_minute_rollover_prev_bar_adverse_flow_and_history_archive(tmp_
     daemon2._restore_runtime_state(now=t0 + timedelta(days=1))
     assert daemon2.state["trade_history"] == []
     assert (tmp_path / "trade_history_2026-11-11.json").exists()
+
+
+def test_redteam3_unfilled_limit_entry_cancels_without_arming_orphan_sll(tmp_path):
+    """
+    Verify when ALPHANITI_LIVE_ORDERS=true and a LIMIT entry stays unconfirmed/unfilled:
+      - Daemon cancels the resting entry order instead of marking FILLED.
+      - active_trade remains None and zero orphan SL-L order is placed.
+      - EMAPI FSM records FixOrdStatus.CANCELLED.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon.live_order_execution = True
+    events = {"placed": [], "cancelled": []}
+
+    class _UnfilledGroww:
+        EXCHANGE_NSE = "NSE"
+        SEGMENT_CASH = "CASH"
+        PRODUCT_MIS = "MIS"
+        VALIDITY_DAY = "DAY"
+        ORDER_TYPE_LIMIT = "LIMIT"
+        ORDER_TYPE_STOP_LOSS = "SL"
+        TRANSACTION_TYPE_BUY = "BUY"
+        TRANSACTION_TYPE_SELL = "SELL"
+
+        def place_order(self, **kwargs):
+            events["placed"].append(kwargs)
+            return {"groww_order_id": "ORD-UNFILLED"}
+
+        def get_order_status(self, groww_order_id=None):
+            return {"order_status": "OPEN"}
+
+        def cancel_order(self, groww_order_id=None, segment=None):
+            events["cancelled"].append(groww_order_id)
+            return {"status": "CANCELLED"}
+
+    daemon.groww = _UnfilledGroww()
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1000.0, "open": 996.0, "day_high": 1001.0, "day_low": 995.0,
+        "volume": 50000, "l2_imbalance_pct": 25.0, "l2_live_available": False,
+        "last_quote_ts": time.time(),
+    }
+    t0 = datetime(2026, 11, 11, 10, 35, tzinfo=IST)
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
+
+    assert len(events["placed"]) == 1  # No SL-L placed!
+    assert "ORD-UNFILLED" in events["cancelled"]
+    assert daemon.state["active_trade"] is None
+    assert FixOrdStatus.CANCELLED in [o["status"] for o in daemon.emapi_fsm.orders.values()]
+
+
+def test_redteam3_sll_trail_modify_and_double_fill_prevention(tmp_path):
+    """
+    Verify:
+      - Ratcheting active_floor calls modify_order to trail standing exchange SL-L trigger.
+      - If standing exchange SL-L already filled before exit runs, NO duplicate exit order is fired.
+    """
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path)
+    daemon.live_order_execution = True
+    events = {"placed": [], "modified": [], "cancelled": []}
+
+    class _TrailAndSllFilledGroww:
+        EXCHANGE_NSE = "NSE"
+        SEGMENT_CASH = "CASH"
+        PRODUCT_MIS = "MIS"
+        VALIDITY_DAY = "DAY"
+        ORDER_TYPE_LIMIT = "LIMIT"
+        ORDER_TYPE_STOP_LOSS = "SL"
+        TRANSACTION_TYPE_BUY = "BUY"
+        TRANSACTION_TYPE_SELL = "SELL"
+
+        def place_order(self, **kwargs):
+            oid = f"ORD-{len(events['placed']) + 1}"
+            events["placed"].append({"oid": oid, **kwargs})
+            return {"groww_order_id": oid}
+
+        def modify_order(self, **kwargs):
+            events["modified"].append(kwargs)
+            return {"status": "MODIFIED"}
+
+        def get_order_status(self, groww_order_id=None):
+            if groww_order_id == "ORD-2":  # Standing SL-L filled on exchange before exit check!
+                return {"order_status": "EXECUTED", "average_fill_price": 1001.2}
+            return {"order_status": "EXECUTED", "average_fill_price": 1000.0}
+
+        def cancel_order(self, groww_order_id=None, segment=None):
+            events["cancelled"].append(groww_order_id)
+            raise RuntimeError("Order already executed")
+
+    daemon.groww = _TrailAndSllFilledGroww()
+    daemon.state["market_status"]["is_open"] = True
+    daemon.state["market_data"]["SBIN"] = {
+        "ltp": 1000.0, "open": 996.0, "day_high": 1001.0, "day_low": 995.0,
+        "volume": 50000, "l2_imbalance_pct": 25.0, "l2_live_available": False,
+        "last_quote_ts": time.time(),
+    }
+    t0 = datetime(2026, 11, 11, 10, 40, tzinfo=IST)
+    daemon.execute_trade_entry("SBIN", "LONG", 1000.0, 988.0, now=t0)
+    assert len(events["placed"]) == 2  # Entry + SL-L (ORD-2)
+
+    # Move peak to +0.55R -> active_floor ratchets up and calls modify_order on ORD-2
+    daemon.state["market_data"]["SBIN"].update({
+        "ltp": 1006.6, "bar_open": 1003.0, "bar_high": 1007.0, "bar_low": 1002.5,
+        "last_quote_ts": time.time(),
+    })
+    daemon.manage_active_trade(t0 + timedelta(minutes=1))
+    assert len(events["modified"]) == 1
+    assert events["modified"][0]["groww_order_id"] == "ORD-2"
+    assert events["modified"][0]["trigger_price"] == daemon.state["active_trade"]["active_floor"]
+
+    # Price drops through ratcheted floor -> ORD-2 already filled at 1001.2 -> NO duplicate sell placed!
+    count_before_exit = len(events["placed"])
+    daemon.state["market_data"]["SBIN"].update({
+        "ltp": 999.0, "bar_open": 1002.0, "bar_high": 1002.5, "bar_low": 998.5,
+        "last_quote_ts": time.time(),
+    })
+    daemon.manage_active_trade(t0 + timedelta(minutes=2))
+    assert len(events["placed"]) == count_before_exit  # Zero duplicate sell!
+    assert daemon.state["active_trade"] is None
+    closed = daemon.state["trade_history"][-1]
+    assert closed["exit_reason"] == "EXCHANGE_SLL_FILLED"
+    assert closed["exit_price"] == 1001.2
