@@ -2099,6 +2099,106 @@ def api_post_audit_date(payload: Dict[str, Any]):
         return {"success": False, "error": str(e)}
 
 # -------------------------------------------------------------------------
+# Isolated Black Swan Gauntlet / Synthetic Shock Injection Replay Endpoint
+# -------------------------------------------------------------------------
+from src.validation.black_swan_gauntlet import run_black_swan_test_01
+
+@app.get("/api/replay/black_swan")
+def api_get_black_swan_replay(
+    symbol: str = "SBIN.NS",
+    anchor_time: str = "14:30",
+    duration_minutes: int = 30,
+    shock_pct: float = -5.0,
+    path_variant: str = "linear",
+    posture: str = "EXPOSED_LONG_INTO_CRASH",
+    session_date: Optional[str] = None,
+):
+    return _execute_isolated_black_swan(
+        symbol=symbol,
+        anchor_time=anchor_time,
+        duration_minutes=duration_minutes,
+        shock_pct=shock_pct,
+        path_variant=path_variant,
+        posture=posture,
+        session_date=session_date,
+    )
+
+@app.post("/api/replay/black_swan")
+def api_post_black_swan_replay(payload: Dict[str, Any]):
+    return _execute_isolated_black_swan(
+        symbol=str(payload.get("symbol", "SBIN.NS")),
+        anchor_time=str(payload.get("anchor_time", "14:30")),
+        duration_minutes=int(payload.get("duration_minutes", 30)),
+        shock_pct=float(payload.get("shock_pct", -5.0)),
+        path_variant=str(payload.get("path_variant", "linear")),
+        posture=str(payload.get("posture", "EXPOSED_LONG_INTO_CRASH")),
+        session_date=payload.get("session_date"),
+    )
+
+def _execute_isolated_black_swan(
+    symbol: str,
+    anchor_time: str,
+    duration_minutes: int,
+    shock_pct: float,
+    path_variant: str,
+    posture: str,
+    session_date: Optional[str],
+) -> Dict[str, Any]:
+    import hashlib
+    clean_sym = symbol.upper().replace(".NS", "").strip()
+    ov_sym = f"{clean_sym}.NS" if clean_sym not in ("NIFTY", "NIFTY50", "BANKNIFTY") else ("NIFTY50" if clean_sym in ("NIFTY", "NIFTY50") else "BANKNIFTY")
+
+    # Verify strict isolation: snapshot live daemon account/active_trade before & after
+    before_sig = None
+    try:
+        from live_strategy_daemon import daemon
+        if daemon and daemon.state:
+            snap = {
+                "account": daemon.state.get("account"),
+                "active_trade": daemon.state.get("active_trade"),
+                "today_net_pnl": daemon.state.get("today_net_pnl"),
+                "trade_history_len": len(daemon.state.get("trade_history", [])),
+            }
+            before_sig = hashlib.sha256(json.dumps(snap, sort_keys=True, default=str).encode()).hexdigest()
+    except Exception:
+        daemon = None
+
+    from openview_api import get_chart_history
+    ov_res = get_chart_history(symbol=ov_sym, interval="1m", period="5d")
+    raw_1m = ov_res.get("candles", [])
+    if not raw_1m:
+        raise HTTPException(status_code=404, detail=f"No 1-minute history returned for {ov_sym}")
+
+    # Convert signed percentage (e.g. -5.0 -> -0.05) safely clamped inside [-0.20, 0.20]
+    shock_frac = max(-0.20, min(0.20, float(shock_pct) / 100.0))
+    dur = max(5, min(60, int(duration_minutes)))
+
+    result = run_black_swan_test_01(
+        raw_1m_candles=raw_1m,
+        symbol=clean_sym,
+        session_date=session_date,
+        anchor_time_ist=anchor_time,
+        duration_minutes=dur,
+        shock_pct=shock_frac,
+        path_variant=path_variant,
+        posture=posture,
+    )
+
+    isolated_verified = True
+    if before_sig is not None and daemon and daemon.state:
+        snap_after = {
+            "account": daemon.state.get("account"),
+            "active_trade": daemon.state.get("active_trade"),
+            "today_net_pnl": daemon.state.get("today_net_pnl"),
+            "trade_history_len": len(daemon.state.get("trade_history", [])),
+        }
+        after_sig = hashlib.sha256(json.dumps(snap_after, sort_keys=True, default=str).encode()).hexdigest()
+        isolated_verified = (before_sig == after_sig)
+
+    result["daemon_state_isolated"] = isolated_verified
+    return result
+
+# -------------------------------------------------------------------------
 # OpenView Free Institutional Charting API
 # -------------------------------------------------------------------------
 from openview_api import router as openview_router
