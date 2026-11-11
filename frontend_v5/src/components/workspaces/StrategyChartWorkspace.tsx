@@ -138,6 +138,7 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
   const [showEma, setShowEma] = useState<boolean>(true);
   const [showSignals, setShowSignals] = useState<boolean>(true);
   const [showLiquidity, setShowLiquidity] = useState<boolean>(true);
+  const [autoRefresh, setAutoRefresh] = useState<boolean>(true);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const priceCanvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -146,11 +147,13 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
   const [canvasWidth, setCanvasWidth] = useState<number>(980);
 
   const fetchChart = useCallback(
-    async (sym: string, dt: string | null, cap: number) => {
+    async (sym: string, dt: string | null, cap: number, silent: boolean = false) => {
       const clean = sym.trim().toUpperCase();
       if (!clean) return;
-      setLoading(true);
-      setHoverIdx(null);
+      if (!silent) {
+        setLoading(true);
+        setHoverIdx(null);
+      }
       try {
         const params = new URLSearchParams({
           symbol: clean,
@@ -161,16 +164,18 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
         const json: StrategyChartResponse = await res.json();
         setData(json);
       } catch (err: any) {
-        setData({
-          status: 'ERROR',
-          symbol: clean,
-          session_date: dt || '',
-          error: err?.message || 'Network error fetching strategy chart',
-          candles: [],
-          trade: null,
-        });
+        if (!silent) {
+          setData({
+            status: 'ERROR',
+            symbol: clean,
+            session_date: dt || '',
+            error: err?.message || 'Network error fetching strategy chart',
+            candles: [],
+            trade: null,
+          });
+        }
       } finally {
-        setLoading(false);
+        if (!silent) setLoading(false);
       }
     },
     []
@@ -181,6 +186,17 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
     fetchChart('ADANIENT', '2024-11-21', capitalInput);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Silent 10s live auto-refresh when viewing Latest Session
+  useEffect(() => {
+    if (!autoRefresh || dateInput.trim() !== '') return;
+    const id = setInterval(() => {
+      if (!document.hidden) {
+        fetchChart(symbolInput, null, capitalInput, true);
+      }
+    }, 10000);
+    return () => clearInterval(id);
+  }, [autoRefresh, dateInput, symbolInput, capitalInput, fetchChart]);
 
   // Measure container width cleanly
   useEffect(() => {
@@ -865,6 +881,18 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
             </label>
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
               <input type="checkbox" checked={showLiquidity} onChange={(e) => setShowLiquidity(e.target.checked)} /> Liquidity Factor
+            </label>
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 4,
+                cursor: 'pointer',
+                color: autoRefresh && !dateInput ? 'var(--accent-green)' : 'var(--text-dim)',
+              }}
+              title="Auto-refresh every 10s when viewing Latest Session"
+            >
+              <input type="checkbox" checked={autoRefresh} onChange={(e) => setAutoRefresh(e.target.checked)} /> Live 10s
             </label>
           </div>
         </div>
