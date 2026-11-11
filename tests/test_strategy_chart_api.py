@@ -57,6 +57,15 @@ def test_analyze_long_gap_orb15_eod_signal():
     assert tr["exit_reason"] == "EOD_1515"
     assert tr["net_pnl"] > 0.0
     assert res["diagnostics"]["a8_triggered"] is True
+    # Verify per-bar and session liquidity factor telemetry
+    c0 = res["candles"][15]
+    assert 0.0 <= c0["liquidity_score"] <= 100.0
+    assert c0["turnover_lakhs"] > 0.0
+    assert c0["amihud_impact"] >= 0.0
+    assert c0["liquidity_tier"] in ("DEEP", "NORMAL", "THIN")
+    assert 0.0 <= res["diagnostics"]["avg_liquidity_score"] <= 100.0
+    assert res["diagnostics"]["liquidity_regime"] in ("DEEP", "NORMAL", "THIN")
+    assert "liquidity_ge_45_ok" in res["diagnostics"]["gates"]
 
 
 def test_analyze_short_gap_orb15_and_hard_stop():

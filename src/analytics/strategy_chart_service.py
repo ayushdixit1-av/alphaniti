@@ -8,6 +8,7 @@ for ANY NSE cash symbol requested by the frontend dashboard.
 from __future__ import annotations
 
 import datetime
+import math
 import pickle
 import re
 from pathlib import Path
@@ -616,6 +617,19 @@ def analyze_intraday_strategy_bars(
         rvol = (float(vol_pos) / avg_v) if avg_v > 0 else 1.0
         vol_hist.append(vol_pos)
 
+        # Causal bar Liquidity Factor [0..100]: RVOL participation + Rupee Turnover Depth - Amihud Price Impact
+        turnover_lakhs = (c * float(vol_pos)) / 100_000.0
+        bar_move_bps = (max(abs(c - o), h - l) / max(1e-6, c)) * 10_000.0
+        amihud_impact = bar_move_bps / max(0.05, turnover_lakhs)
+        vol_depth = min(1.0, rvol / 2.0)
+        turnover_depth = min(1.0, math.log1p(turnover_lakhs) / math.log1p(50.0))
+        impact_penalty = min(1.0, amihud_impact / 50.0)
+        liquidity_score = round(
+            100.0 * max(0.0, min(1.0, 0.45 * vol_depth + 0.40 * turnover_depth + 0.15 * (1.0 - impact_penalty))),
+            1,
+        )
+        liquidity_tier = "DEEP" if liquidity_score >= 70.0 else ("NORMAL" if liquidity_score >= 40.0 else "THIN")
+
         hhmm = _min_to_hhmm(t_min)
         enriched_candles.append({
             "time": hhmm,
@@ -629,6 +643,10 @@ def analyze_intraday_strategy_bars(
             "ema5": round(ema5, 2),
             "ema15": round(ema15, 2),
             "rvol": round(rvol, 2),
+            "turnover_lakhs": round(turnover_lakhs, 2),
+            "amihud_impact": round(amihud_impact, 2),
+            "liquidity_score": liquidity_score,
+            "liquidity_tier": liquidity_tier,
         })
 
         # Evaluate A8 causal signal in 09:30..11:00 IST (570 <= t_min <= 660)
@@ -729,6 +747,20 @@ def analyze_intraday_strategy_bars(
     macro_ok = n_bull if direction_bias == "LONG" else n_bear
     orb_ok = saw_orb_break_long if direction_bias == "LONG" else saw_orb_break_short
 
+    liq_scores = [float(ec["liquidity_score"]) for ec in enriched_candles]
+    win_liq_scores = [
+        float(ec["liquidity_score"])
+        for ec in enriched_candles
+        if strat.entry_start_min <= int(ec["minute"]) <= strat.entry_end_min
+    ]
+    avg_liq = round(sum(liq_scores) / len(liq_scores), 1) if liq_scores else 0.0
+    entry_win_liq = round(sum(win_liq_scores) / len(win_liq_scores), 1) if win_liq_scores else avg_liq
+    total_turnover_cr = round(sum(float(ec["turnover_lakhs"]) for ec in enriched_candles) / 100.0, 2)
+    avg_amihud = round(
+        sum(float(ec["amihud_impact"]) for ec in enriched_candles) / len(enriched_candles), 2
+    ) if enriched_candles else 0.0
+    liq_regime = "DEEP" if avg_liq >= 70.0 else ("NORMAL" if avg_liq >= 40.0 else "THIN")
+
     diagnostics = {
         "prev_close": round(eff_prev_c, 2),
         "day_open": round(d_open, 2),
@@ -741,6 +773,11 @@ def analyze_intraday_strategy_bars(
         "nifty_sma20": round(nifty_sma20, 2) if nifty_sma20 is not None else None,
         "nifty_day_ret_pct": round(nifty_day_ret_pct * 100.0, 2) if nifty_day_ret_pct is not None else None,
         "max_rvol_0930_1100": round(max_rvol_in_window, 2),
+        "avg_liquidity_score": avg_liq,
+        "entry_window_liquidity_score": entry_win_liq,
+        "total_turnover_cr": total_turnover_cr,
+        "avg_amihud_impact": avg_amihud,
+        "liquidity_regime": liq_regime,
         "gates": {
             "gap_ge_1_8_pct": bool(gap_ok),
             "atr_le_3_5_pct": bool(atr_ok),
@@ -749,6 +786,7 @@ def analyze_intraday_strategy_bars(
             "rvol_ge_1_8x_ok": bool(max_rvol_in_window >= strat.min_rvol),
             "vwap_align_ok": bool(saw_vwap_ok),
             "ema5_15_align_ok": bool(saw_ema_ok),
+            "liquidity_ge_45_ok": bool(entry_win_liq >= 45.0),
         },
         "a8_triggered": trade_result is not None,
     }

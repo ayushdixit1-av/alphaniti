@@ -22,6 +22,10 @@ interface StrategyCandle {
   ema5: number;
   ema15: number;
   rvol: number;
+  turnover_lakhs?: number;
+  amihud_impact?: number;
+  liquidity_score?: number;
+  liquidity_tier?: 'DEEP' | 'NORMAL' | 'THIN';
 }
 
 interface StrategyTrade {
@@ -54,6 +58,11 @@ interface StrategyDiagnostics {
   nifty_sma20: number | null;
   nifty_day_ret_pct: number | null;
   max_rvol_0930_1100: number;
+  avg_liquidity_score?: number;
+  entry_window_liquidity_score?: number;
+  total_turnover_cr?: number;
+  avg_amihud_impact?: number;
+  liquidity_regime?: 'DEEP' | 'NORMAL' | 'THIN';
   gates: {
     gap_ge_1_8_pct: boolean;
     atr_le_3_5_pct: boolean;
@@ -62,6 +71,7 @@ interface StrategyDiagnostics {
     rvol_ge_1_8x_ok: boolean;
     vwap_align_ok: boolean;
     ema5_15_align_ok: boolean;
+    liquidity_ge_45_ok?: boolean;
   };
   a8_triggered: boolean;
 }
@@ -127,10 +137,12 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
   const [showVwap, setShowVwap] = useState<boolean>(true);
   const [showEma, setShowEma] = useState<boolean>(true);
   const [showSignals, setShowSignals] = useState<boolean>(true);
+  const [showLiquidity, setShowLiquidity] = useState<boolean>(true);
 
   const containerRef = useRef<HTMLDivElement | null>(null);
   const priceCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const volCanvasRef = useRef<HTMLCanvasElement | null>(null);
+  const liqCanvasRef = useRef<HTMLCanvasElement | null>(null);
   const [canvasWidth, setCanvasWidth] = useState<number>(980);
 
   const fetchChart = useCallback(
@@ -500,7 +512,97 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
       vctx.stroke();
       vctx.restore();
     }
-  }, [data, canvasWidth, hoverIdx, showOrb, showVwap, showEma, showSignals]);
+
+    // Dedicated Liquidity Factor [0..100] + Bar Turnover (₹L) Sub-Panel
+    const liqCanvas = liqCanvasRef.current;
+    if (liqCanvas && showLiquidity) {
+      const lHeight = 112;
+      liqCanvas.width = width * dpr;
+      liqCanvas.height = lHeight * dpr;
+      liqCanvas.style.width = `${width}px`;
+      liqCanvas.style.height = `${lHeight}px`;
+      const lctx = liqCanvas.getContext('2d');
+      if (lctx) {
+        lctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        const lpad = { l: 58, r: 74, t: 18, b: 22 };
+        const lh = lHeight - lpad.t - lpad.b;
+        const yLiq = (score: number) => lpad.t + ((100 - Math.max(0, Math.min(100, score))) / 100) * lh;
+
+        lctx.fillStyle = '#070b12';
+        lctx.fillRect(0, 0, width, lHeight);
+
+        // Background Rupee Turnover Bars
+        let maxTurn = 1;
+        for (const c of candles) {
+          const tl = c.turnover_lakhs ?? (c.close * c.volume) / 100000;
+          if (tl > maxTurn) maxTurn = tl;
+        }
+        for (let i = 0; i < n; i++) {
+          const c = candles[i];
+          const tl = c.turnover_lakhs ?? (c.close * c.volume) / 100000;
+          const bH = (tl / maxTurn) * (lh * 0.72);
+          lctx.fillStyle = 'rgba(56, 189, 248, 0.16)';
+          lctx.fillRect(xOf(i) - candleW / 2, lHeight - lpad.b - bH, candleW, Math.max(1, bH));
+        }
+
+        // Reference Lines: 70 (DEEP) and 45 (MIN LIQUIDITY GATE)
+        lctx.save();
+        lctx.setLineDash([4, 4]);
+        lctx.strokeStyle = 'rgba(16, 185, 129, 0.45)';
+        lctx.beginPath();
+        lctx.moveTo(lpad.l, yLiq(70));
+        lctx.lineTo(width - lpad.r, yLiq(70));
+        lctx.stroke();
+
+        lctx.strokeStyle = 'rgba(245, 158, 11, 0.55)';
+        lctx.beginPath();
+        lctx.moveTo(lpad.l, yLiq(45));
+        lctx.lineTo(width - lpad.r, yLiq(45));
+        lctx.stroke();
+        lctx.restore();
+
+        // Liquidity Factor Area + Line
+        lctx.beginPath();
+        for (let i = 0; i < n; i++) {
+          const sc = candles[i].liquidity_score ?? 50;
+          const x = xOf(i);
+          const y = yLiq(sc);
+          if (i === 0) lctx.moveTo(x, y);
+          else lctx.lineTo(x, y);
+        }
+        lctx.strokeStyle = '#38bdf8';
+        lctx.lineWidth = 1.65;
+        lctx.stroke();
+
+        lctx.lineTo(xOf(n - 1), lHeight - lpad.b);
+        lctx.lineTo(xOf(0), lHeight - lpad.b);
+        lctx.closePath();
+        lctx.fillStyle = 'rgba(56, 189, 248, 0.12)';
+        lctx.fill();
+
+        lctx.fillStyle = '#94a3b8';
+        lctx.font = '10px "JetBrains Mono", monospace';
+        lctx.textAlign = 'left';
+        lctx.fillText('LIQUIDITY FACTOR [0-100] (RVOL + Turnover ₹L - Amihud Impact)', lpad.l + 4, 12);
+        lctx.fillStyle = '#10b981';
+        lctx.fillText('70 DEEP', width - lpad.r + 6, yLiq(70) + 3);
+        lctx.fillStyle = '#f59e0b';
+        lctx.fillText('45 MIN', width - lpad.r + 6, yLiq(45) + 3);
+
+        if (hoverIdx !== null && hoverIdx >= 0 && hoverIdx < n) {
+          const hx = xOf(hoverIdx);
+          lctx.save();
+          lctx.setLineDash([3, 3]);
+          lctx.strokeStyle = 'rgba(226, 232, 240, 0.45)';
+          lctx.beginPath();
+          lctx.moveTo(hx, lpad.t);
+          lctx.lineTo(hx, lHeight - lpad.b);
+          lctx.stroke();
+          lctx.restore();
+        }
+      }
+    }
+  }, [data, canvasWidth, hoverIdx, showOrb, showVwap, showEma, showSignals, showLiquidity]);
 
   useEffect(() => {
     drawCharts();
@@ -761,6 +863,9 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
             <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
               <input type="checkbox" checked={showSignals} onChange={(e) => setShowSignals(e.target.checked)} /> A8 Signals & SL
             </label>
+            <label style={{ display: 'flex', alignItems: 'center', gap: 4, cursor: 'pointer' }}>
+              <input type="checkbox" checked={showLiquidity} onChange={(e) => setShowLiquidity(e.target.checked)} /> Liquidity Factor
+            </label>
           </div>
         </div>
       </div>
@@ -803,6 +908,24 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
               </span>
               <span>ATR14: <strong style={{ color: diag.atr14_pct <= 3.5 ? 'var(--accent-green)' : 'var(--accent-red)' }}>{diag.atr14_pct}%</strong></span>
               <span>Max RVOL: <strong>{diag.max_rvol_0930_1100}x</strong></span>
+              {diag.avg_liquidity_score !== undefined && (
+                <span>
+                  Liq:{' '}
+                  <strong
+                    style={{
+                      color:
+                        diag.avg_liquidity_score >= 70
+                          ? 'var(--accent-green)'
+                          : diag.avg_liquidity_score >= 45
+                            ? 'var(--accent-cyan)'
+                            : 'var(--accent-red)',
+                    }}
+                  >
+                    {diag.avg_liquidity_score}/100 ({diag.liquidity_regime || 'NORMAL'})
+                  </strong>{' '}
+                  · <strong>₹{diag.total_turnover_cr ?? 0}Cr</strong>
+                </span>
+              )}
             </div>
           </div>
 
@@ -861,6 +984,7 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
                   ['RVOL >= 1.8x', diag.gates.rvol_ge_1_8x_ok],
                   ['VWAP Align', diag.gates.vwap_align_ok],
                   ['EMA5/15 Align', diag.gates.ema5_15_align_ok],
+                  ...(diag.gates.liquidity_ge_45_ok !== undefined ? [['Liquidity >= 45', diag.gates.liquidity_ge_45_ok]] : []),
                 ].map(([label, ok]) => (
                   <span
                     key={String(label)}
@@ -944,6 +1068,29 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
             <span style={{ color: activeBar.rvol >= 1.8 ? '#f59e0b' : 'var(--text-muted)' }}>
               RVOL: <strong>{activeBar.rvol.toFixed(2)}x</strong>
             </span>
+            {activeBar.liquidity_score !== undefined && (
+              <span>
+                Liq:{' '}
+                <strong
+                  style={{
+                    color:
+                      activeBar.liquidity_score >= 70
+                        ? '#10b981'
+                        : activeBar.liquidity_score >= 45
+                          ? '#38bdf8'
+                          : '#f43f5e',
+                  }}
+                >
+                  {activeBar.liquidity_score.toFixed(1)}/100 ({activeBar.liquidity_tier || 'NORMAL'})
+                </strong>
+              </span>
+            )}
+            {activeBar.turnover_lakhs !== undefined && (
+              <span>Turn: <strong>₹{activeBar.turnover_lakhs.toFixed(1)}L</strong></span>
+            )}
+            {activeBar.amihud_impact !== undefined && (
+              <span style={{ color: 'var(--text-muted)' }}>Impact: {activeBar.amihud_impact.toFixed(2)} bps/L</span>
+            )}
           </div>
         )}
 
@@ -959,6 +1106,14 @@ export const StrategyChartWorkspace: React.FC<StrategyChartWorkspaceProps> = ({
           onMouseLeave={() => setHoverIdx(null)}
           style={{ display: 'block', borderTop: '1px solid rgba(148, 163, 184, 0.1)', cursor: 'crosshair' }}
         />
+        {showLiquidity && (
+          <canvas
+            ref={liqCanvasRef}
+            onMouseMove={handleMouseMove}
+            onMouseLeave={() => setHoverIdx(null)}
+            style={{ display: 'block', borderTop: '1px solid rgba(148, 163, 184, 0.1)', cursor: 'crosshair' }}
+          />
+        )}
       </div>
     </div>
   );

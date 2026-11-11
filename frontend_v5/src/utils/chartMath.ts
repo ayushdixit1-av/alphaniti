@@ -6,6 +6,11 @@ export interface NormalizedBar extends CandleBar {
   vwap: number;
   vwapUpper: number;
   vwapLower: number;
+  rvol: number;
+  turnoverLakhs: number;
+  amihudImpact: number;
+  liquidityScore: number;
+  liquidityTier: 'DEEP' | 'NORMAL' | 'THIN';
 }
 
 export interface ComputedVPBin {
@@ -55,11 +60,13 @@ export function normalizeAndComputeIndicators(candles: CandleBar[]): NormalizedB
   let cumTPV = 0;
   let cumVol = 0;
   let cumTP2V = 0;
+  const volHist: number[] = [];
 
   return deduped.map((bar) => {
     emaPrev = emaPrev === null ? bar.close : bar.close * k + emaPrev * (1 - k);
     const tp = (bar.high + bar.low + bar.close) / 3;
-    const v = Math.max(1, bar.volume || 1);
+    const rawVol = Math.max(0, bar.volume || 0);
+    const v = Math.max(1, rawVol);
     cumTPV += tp * v;
     cumTP2V += tp * tp * v;
     cumVol += v;
@@ -67,12 +74,35 @@ export function normalizeAndComputeIndicators(candles: CandleBar[]): NormalizedB
     const variance = Math.max(0, cumTP2V / cumVol - vwap * vwap);
     const std = Math.sqrt(variance);
 
+    // Causal bar Liquidity Factor [0..100]: RVOL depth + Turnover depth - Amihud price impact
+    const winVols = volHist.slice(-20);
+    const avgV = winVols.length > 0 ? winVols.reduce((a, b) => a + b, 0) / winVols.length : Math.max(1, rawVol);
+    const rvol = avgV > 0 ? rawVol / avgV : 1;
+    volHist.push(rawVol);
+
+    const turnoverLakhs = (bar.close * rawVol) / 100000;
+    const barMoveBps = (Math.max(Math.abs(bar.close - bar.open), bar.high - bar.low) / Math.max(1e-6, bar.close)) * 10000;
+    const amihudImpact = barMoveBps / Math.max(0.05, turnoverLakhs);
+    const volDepth = Math.min(1, rvol / 2);
+    const turnoverDepth = Math.min(1, Math.log1p(turnoverLakhs) / Math.log1p(50));
+    const impactPenalty = Math.min(1, amihudImpact / 50);
+    const liquidityScore = Number(
+      (100 * Math.max(0, Math.min(1, 0.45 * volDepth + 0.4 * turnoverDepth + 0.15 * (1 - impactPenalty)))).toFixed(1)
+    );
+    const liquidityTier: 'DEEP' | 'NORMAL' | 'THIN' =
+      liquidityScore >= 70 ? 'DEEP' : liquidityScore >= 40 ? 'NORMAL' : 'THIN';
+
     return {
       ...bar,
       ema9: Number(emaPrev.toFixed(2)),
       vwap: Number(vwap.toFixed(2)),
       vwapUpper: Number((vwap + std).toFixed(2)),
       vwapLower: Number((vwap - std).toFixed(2)),
+      rvol: Number(rvol.toFixed(2)),
+      turnoverLakhs: Number(turnoverLakhs.toFixed(2)),
+      amihudImpact: Number(amihudImpact.toFixed(2)),
+      liquidityScore,
+      liquidityTier,
     };
   });
 }

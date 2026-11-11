@@ -83,11 +83,13 @@ export const SuperChart: React.FC<SuperChartProps> = ({
   const vwapSeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapUpperRef = useRef<ISeriesApi<'Line'> | null>(null);
   const vwapLowerRef = useRef<ISeriesApi<'Line'> | null>(null);
+  const liquiditySeriesRef = useRef<ISeriesApi<'Line'> | null>(null);
   const priceLinesRef = useRef<IPriceLine[]>([]);
   const barMapRef = useRef<Map<number, NormalizedBar>>(new Map());
   const prevSymbolRef = useRef<string>(symbol);
 
   const [showIndicators, setShowIndicators] = useState(true);
+  const [showLiquidity, setShowLiquidity] = useState(true);
   const [showVP, setShowVP] = useState(true);
   const [showDB, setShowDB] = useState(true);
   const [showHL, setShowHL] = useState(true);
@@ -138,6 +140,10 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     vol: number;
     vwap: number;
     pct: number;
+    liquidityScore: number;
+    liquidityTier: 'DEEP' | 'NORMAL' | 'THIN';
+    turnoverLakhs: number;
+    rvol: number;
   } | null>(null);
 
   const allNormalized = useMemo(() => normalizeAndComputeIndicators(candles), [candles]);
@@ -176,13 +182,17 @@ export const SuperChart: React.FC<SuperChartProps> = ({
   // Compute causal Session High/Low & Volume Profile across visibleBars
   const sessionStats = useMemo(() => {
     if (visibleBars.length === 0) {
-      return { high: 0, low: 0, lastClose: 0, lastVwap: 0, vp: null };
+      return { high: 0, low: 0, lastClose: 0, lastVwap: 0, avgLiquidity: 0, totalTurnoverCr: 0, vp: null };
     }
     let sHigh = -Infinity;
     let sLow = Infinity;
+    let sumLiq = 0;
+    let sumTurnL = 0;
     for (const b of visibleBars) {
       if (b.high > sHigh) sHigh = b.high;
       if (b.low < sLow) sLow = b.low;
+      sumLiq += b.liquidityScore || 0;
+      sumTurnL += b.turnoverLakhs || 0;
     }
     const last = visibleBars[visibleBars.length - 1];
     const vp = computeVolumeProfile(visibleBars, 32);
@@ -191,6 +201,8 @@ export const SuperChart: React.FC<SuperChartProps> = ({
       low: sLow,
       lastClose: last.close,
       lastVwap: last.vwap,
+      avgLiquidity: Number((sumLiq / visibleBars.length).toFixed(1)),
+      totalTurnoverCr: Number((sumTurnL / 100).toFixed(2)),
       vp,
     };
   }, [visibleBars]);
@@ -326,6 +338,20 @@ export const SuperChart: React.FC<SuperChartProps> = ({
       lastValueVisible: false,
     });
 
+    const liquiditySeries = chart.addLineSeries({
+      color: '#38bdf8',
+      lineWidth: 1,
+      lineStyle: 0,
+      priceScaleId: 'liq',
+      priceLineVisible: false,
+      lastValueVisible: true,
+      title: 'LIQ%',
+    });
+    chart.priceScale('liq').applyOptions({
+      scaleMargins: { top: 0.72, bottom: 0.14 },
+      borderVisible: false,
+    });
+
     chartRef.current = chart;
     candleSeriesRef.current = candleSeries;
     volSeriesRef.current = volSeries;
@@ -333,6 +359,7 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     vwapSeriesRef.current = vwapSeries;
     vwapUpperRef.current = vwapUpper;
     vwapLowerRef.current = vwapLower;
+    liquiditySeriesRef.current = liquiditySeries;
 
     // Single Crosshair subscription (no stacked listeners)
     const onCrosshair = (param: any) => {
@@ -356,6 +383,10 @@ export const SuperChart: React.FC<SuperChartProps> = ({
         vol: b.volume || 0,
         vwap: b.vwap,
         pct,
+        liquidityScore: b.liquidityScore,
+        liquidityTier: b.liquidityTier,
+        turnoverLakhs: b.turnoverLakhs,
+        rvol: b.rvol,
       });
     };
     chart.subscribeCrosshairMove(onCrosshair);
@@ -408,8 +439,9 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     const vws = vwapSeriesRef.current;
     const vwu = vwapUpperRef.current;
     const vwl = vwapLowerRef.current;
+    const ls = liquiditySeriesRef.current;
     const chart = chartRef.current;
-    if (!cs || !vs || !es || !vws || !vwu || !vwl || !chart) return;
+    if (!cs || !vs || !es || !vws || !vwu || !vwl || !ls || !chart) return;
 
     const map = new Map<number, NormalizedBar>();
     const formatted: CandlestickData<Time>[] = [];
@@ -418,6 +450,7 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     const vwapData: LineData<Time>[] = [];
     const upperData: LineData<Time>[] = [];
     const lowerData: LineData<Time>[] = [];
+    const liqData: LineData<Time>[] = [];
 
     for (const bar of visibleBars) {
       map.set(bar.ts, bar);
@@ -433,6 +466,7 @@ export const SuperChart: React.FC<SuperChartProps> = ({
       vwapData.push({ time: t, value: bar.vwap });
       upperData.push({ time: t, value: bar.vwapUpper });
       lowerData.push({ time: t, value: bar.vwapLower });
+      liqData.push({ time: t, value: bar.liquidityScore });
     }
     barMapRef.current = map;
 
@@ -442,6 +476,7 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     vws.setData(showIndicators ? vwapData : []);
     vwu.setData(showIndicators ? upperData : []);
     vwl.setData(showIndicators ? lowerData : []);
+    ls.setData(showLiquidity ? liqData : []);
 
     // Causal Execution Markers (only show exit marker once replay reaches exit bar)
     const markers: SeriesMarker<Time>[] = [];
@@ -606,6 +641,7 @@ export const SuperChart: React.FC<SuperChartProps> = ({
     allNormalized,
     symbol,
     showIndicators,
+    showLiquidity,
     showVP,
     showHL,
     showLevels,
@@ -940,6 +976,13 @@ export const SuperChart: React.FC<SuperChartProps> = ({
           >
             Levels
           </button>
+          <button
+            className={`tf-btn ${showLiquidity ? 'active' : ''}`}
+            onClick={() => setShowLiquidity((s) => !s)}
+            title="Causal Intraday Liquidity Factor (0-100: RVOL + Turnover - Amihud Impact)"
+          >
+            LIQ
+          </button>
           {!isControlledReplay && (
             <button
               className={`tf-btn ${effectiveReplayIdx !== null ? 'active' : ''}`}
@@ -1045,6 +1088,22 @@ export const SuperChart: React.FC<SuperChartProps> = ({
               </span>
               <span>VWAP <strong style={{ color: '#e879f9' }}>{crosshairBar.vwap.toFixed(2)}</strong></span>
               <span>V <strong style={{ color: 'var(--text-muted)' }}>{crosshairBar.vol.toLocaleString()}</strong></span>
+              <span>
+                Liq{' '}
+                <strong
+                  style={{
+                    color:
+                      crosshairBar.liquidityScore >= 70
+                        ? 'var(--accent-green)'
+                        : crosshairBar.liquidityScore >= 40
+                          ? 'var(--accent-cyan)'
+                          : 'var(--accent-red)',
+                  }}
+                >
+                  {crosshairBar.liquidityScore}/100 ({crosshairBar.liquidityTier})
+                </strong>{' '}
+                <span style={{ color: 'var(--text-dim)' }}>₹{crosshairBar.turnoverLakhs.toFixed(1)}L</span>
+              </span>
             </>
           ) : (
             <>
@@ -1069,6 +1128,12 @@ export const SuperChart: React.FC<SuperChartProps> = ({
               {sessionStats.vp && (
                 <span>
                   POC <strong style={{ color: '#f59e0b' }}>{sessionStats.vp.pocPrice.toFixed(1)}</strong>
+                </span>
+              )}
+              {sessionStats.avgLiquidity > 0 && (
+                <span>
+                  Liq <strong style={{ color: sessionStats.avgLiquidity >= 45 ? 'var(--accent-cyan)' : 'var(--accent-red)' }}>{sessionStats.avgLiquidity}/100</strong>{' '}
+                  <span style={{ color: 'var(--text-dim)' }}>₹{sessionStats.totalTurnoverCr}Cr</span>
                 </span>
               )}
             </>
