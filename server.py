@@ -1358,7 +1358,7 @@ def get_premarket_macro():
             "seconds_remaining": sec_remaining,
             "formatted_remaining": f"{h:02d}h {m:02d}m {s:02d}s",
             "auth_guard_status": "ARMED_AND_VALID" if token_ok else "TOKEN_EXPIRED_REFRESH_NEEDED",
-            "token_expiry_timestamp": 1794357000,
+            "token_expiry_timestamp": int(target_6am.timestamp()),
             "action_on_zero": "PROMPT_MORNING_SEBI_OAUTH_REFRESH"
         },
         "global_macro": {
