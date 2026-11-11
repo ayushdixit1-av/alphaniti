@@ -159,3 +159,34 @@ def test_cache_7tuple_pkl_and_fastapi_endpoint(tmp_path: Path):
         body = r_chart.json()
         assert body["symbol"] == "TRENT"
         assert body["status"] == "SUCCESS"
+
+
+def test_latest_session_prefers_live_groww_over_older_cache(tmp_path: Path):
+    # Cache stops on 2026-11-09, while live Groww has newer 2026-11-11 session bars
+    with open(tmp_path / "RELIANCE.pkl", "wb") as f:
+        pickle.dump(
+            {"2026-11-09": [(555, "2026-11-09T09:15:00", 1310.0, 1315.0, 1308.0, 1312.0, 1000)]},
+            f,
+        )
+
+    class _FakeGroww:
+        def get_historical_candles(self, candle_interval="1minute", **kwargs):
+            if candle_interval == "1day":
+                return {"candles": [["2026-11-09T09:15:00+05:30", 1310.0, 1315.0, 1308.0, 1312.0, 50000]]}
+            return {
+                "candles": [
+                    ["2026-11-11T09:15:00+05:30", 1333.5, 1337.0, 1330.1, 1336.0, 25000],
+                    ["2026-11-11T09:16:00+05:30", 1336.0, 1340.0, 1335.0, 1339.0, 30000],
+                ]
+            }
+
+    payload = get_strategy_candlestick_payload(
+        symbol="RELIANCE",
+        date_str=None,
+        groww_client=_FakeGroww(),
+        cache_dir=tmp_path,
+    )
+    assert payload["status"] == "SUCCESS"
+    assert payload["session_date"] == "2026-11-11"
+    assert payload["source"] == "groww_live_api_1m"
+    assert len(payload["candles"]) == 2

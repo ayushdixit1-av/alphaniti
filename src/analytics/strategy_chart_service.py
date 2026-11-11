@@ -312,8 +312,12 @@ def _fetch_from_groww(
         if resolved_date is None:
             return None
     else:
-        substantial = [d for d, bs in by_day.items() if len(bs) >= 15]
-        resolved_date = max(substantial) if substantial else max(by_day.keys())
+        today_str = datetime.datetime.now(IST).strftime("%Y-%m-%d")
+        if today_str in by_day and len(by_day[today_str]) >= 1:
+            resolved_date = today_str
+        else:
+            substantial = [d for d, bs in by_day.items() if len(bs) >= 15]
+            resolved_date = max(substantial) if substantial else max(by_day.keys())
 
     # Fetch ~40 days daily candles for causal prev_close & ATR14%
     daily_start = (datetime.date.fromisoformat(resolved_date) - datetime.timedelta(days=45)).strftime("%Y-%m-%d")
@@ -849,12 +853,22 @@ def get_strategy_candlestick_payload(
     eff_cache_dir = cache_dir if cache_dir is not None else DEFAULT_CACHE_DIR
 
     loaded: Optional[Dict[str, Any]] = None
-    # 1. Local 7-year cache if present on VPS/local
-    loaded = _load_from_pkl_cache(clean_sym, target_date, eff_cache_dir)
+    # 1. When a specific historical date is requested, check fast 7-year cache first
+    cached_loaded = _load_from_pkl_cache(clean_sym, target_date, eff_cache_dir)
 
-    # 2. Live/Historical Groww API (supports ALL NSE cash stocks)
-    if loaded is None:
-        loaded = _fetch_from_groww(clean_sym, target_date, groww_client)
+    if target_date is not None:
+        loaded = cached_loaded
+        if loaded is None:
+            loaded = _fetch_from_groww(clean_sym, target_date, groww_client)
+    else:
+        # Latest Session mode: prefer live Groww session if newer than local historical cache
+        live_loaded = _fetch_from_groww(clean_sym, None, groww_client)
+        if live_loaded is not None and (
+            cached_loaded is None or str(live_loaded["session_date"]) >= str(cached_loaded["session_date"])
+        ):
+            loaded = live_loaded
+        else:
+            loaded = cached_loaded
 
     # 3. yfinance fallback (supports ALL NSE symbols via .NS for recent sessions)
     if loaded is None:
