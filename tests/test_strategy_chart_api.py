@@ -172,7 +172,13 @@ def test_latest_session_prefers_live_groww_over_older_cache(tmp_path: Path):
     class _FakeGroww:
         def get_historical_candles(self, candle_interval="1minute", **kwargs):
             if candle_interval == "1day":
-                return {"candles": [["2026-11-09T09:15:00+05:30", 1310.0, 1315.0, 1308.0, 1312.0, 50000]]}
+                return {
+                    "candles": [
+                        ["2026-11-08T00:00:00", None, 1324.6, 1314.8, 1324.0, 4204341, None],
+                        ["2026-11-09T00:00:00", None, 1330.2, 1305.5, 1324.4, 19734153, None],
+                        ["2026-11-11T00:00:00", 1333.5, 1349.3, 1327.2, 1335.4, 17550840, None],
+                    ]
+                }
             return {
                 "candles": [
                     ["2026-11-11T09:15:00+05:30", 1333.5, 1337.0, 1330.1, 1336.0, 25000],
@@ -190,3 +196,6 @@ def test_latest_session_prefers_live_groww_over_older_cache(tmp_path: Path):
     assert payload["session_date"] == "2026-11-11"
     assert payload["source"] == "groww_live_api_1m"
     assert len(payload["candles"]) == 2
+    assert payload["diagnostics"]["prev_close"] == 1324.4
+    assert payload["diagnostics"]["gap_pct"] == 0.69
+    assert payload["diagnostics"]["atr14_pct"] > 0.0

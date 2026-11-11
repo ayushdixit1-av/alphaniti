@@ -249,6 +249,22 @@ def _fetch_groww_candles_for_range(
     return []
 
 
+def _parse_groww_daily_candles(raw_daily: List[Any]) -> List[Tuple[str, float, float, float, float]]:
+    """Parse Groww 1day candles safely even when historical 'open' (c[1]) is None."""
+    rows: List[Tuple[str, float, float, float, float]] = []
+    for c in raw_daily:
+        try:
+            if not c or len(c) < 5 or c[2] is None or c[3] is None or c[4] is None:
+                continue
+            d_str = _parse_iso_or_epoch_to_ist(c[0]).strftime("%Y-%m-%d")
+            close_p = float(c[4])
+            open_p = float(c[1]) if c[1] is not None else close_p
+            rows.append((d_str, open_p, float(c[2]), float(c[3]), close_p))
+        except Exception:
+            continue
+    return rows
+
+
 def _parse_groww_bars_by_day(
     raw_candles: List[Any],
 ) -> Dict[str, List[Tuple[int, float, float, float, float, int]]]:
@@ -328,13 +344,7 @@ def _fetch_from_groww(
         f"{resolved_date} 15:30:00",
         interval="1day",
     )
-    daily_rows: List[Tuple[str, float, float, float, float]] = []
-    for c in raw_daily:
-        try:
-            d_str = _parse_iso_or_epoch_to_ist(c[0]).strftime("%Y-%m-%d")
-            daily_rows.append((d_str, float(c[1]), float(c[2]), float(c[3]), float(c[4])))
-        except Exception:
-            continue
+    daily_rows: List[Tuple[str, float, float, float, float]] = _parse_groww_daily_candles(raw_daily)
     if not any(r[0] < resolved_date for r in daily_rows):
         for d_k, bs in sorted(by_day.items()):
             if d_k < resolved_date and bs:
@@ -482,12 +492,7 @@ def _load_nifty_macro_context(
             f"{target_date} 15:30:00",
             interval="1day",
         )
-        for c in raw_d:
-            try:
-                d_s = _parse_iso_or_epoch_to_ist(c[0]).strftime("%Y-%m-%d")
-                daily_rows.append((d_s, float(c[1]), float(c[2]), float(c[3]), float(c[4])))
-            except Exception:
-                continue
+        daily_rows = _parse_groww_daily_candles(raw_d)
 
     if not daily_rows:
         try:
