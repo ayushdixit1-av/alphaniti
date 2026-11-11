@@ -64,7 +64,11 @@ def extract_session_1m_candles(
     if not grouped:
         return ("", [])
 
-    target_date = session_date if (session_date and session_date in grouped) else max(grouped.keys())
+    if session_date and session_date in grouped:
+        target_date = session_date
+    else:
+        full_days = [d for d, d_bars in grouped.items() if len(d_bars) >= 120]
+        target_date = max(full_days) if full_days else max(grouped.keys())
     bars = sorted(grouped[target_date], key=lambda b: b["time"])
 
     # Deduplicate timestamps
