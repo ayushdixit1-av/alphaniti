@@ -1089,20 +1089,41 @@ def get_symbol_candles(symbol: str):
             is_live_today = False
 
             try:
-                res = daemon.groww.get_historical_candle_data(
-                    trading_symbol=symbol,
-                    exchange=GrowwAPI.EXCHANGE_NSE,
-                    segment=GrowwAPI.SEGMENT_CASH,
-                    start_time=f"{start_5d} 09:15:00",
-                    end_time=f"{today_str} 15:30:00",
-                    interval_in_minutes=5
-                )
-                c_list = res.get("candles", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+                c_list = []
+                if hasattr(daemon.groww, "get_historical_candles"):
+                    res = daemon.groww.get_historical_candles(
+                        exchange=GrowwAPI.EXCHANGE_NSE,
+                        segment=GrowwAPI.SEGMENT_CASH,
+                        groww_symbol=f"NSE-{symbol}",
+                        start_time=f"{start_5d} 09:15:00",
+                        end_time=f"{today_str} 15:30:00",
+                        candle_interval="5minute",
+                    )
+                    c_list = res.get("candles", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
+                if not c_list and hasattr(daemon.groww, "get_historical_candle_data"):
+                    res = daemon.groww.get_historical_candle_data(
+                        trading_symbol=symbol,
+                        exchange=GrowwAPI.EXCHANGE_NSE,
+                        segment=GrowwAPI.SEGMENT_CASH,
+                        start_time=f"{start_5d} 09:15:00",
+                        end_time=f"{today_str} 15:30:00",
+                        interval_in_minutes=5
+                    )
+                    c_list = res.get("candles", []) if isinstance(res, dict) else (res if isinstance(res, list) else [])
                 if c_list:
                     parsed = []
                     for c in c_list:
-                        ts = int(c[0])
-                        dt_c = datetime.datetime.fromtimestamp(ts, tz=tz_ist)
+                        raw_ts = c[0]
+                        if isinstance(raw_ts, (int, float)) or str(raw_ts).isdigit():
+                            ts = int(float(raw_ts))
+                            dt_c = datetime.datetime.fromtimestamp(ts, tz=tz_ist)
+                        else:
+                            dt_c = datetime.datetime.fromisoformat(str(raw_ts).replace("Z", "+00:00"))
+                            if dt_c.tzinfo is None:
+                                dt_c = dt_c.replace(tzinfo=tz_ist)
+                            else:
+                                dt_c = dt_c.astimezone(tz_ist)
+                            ts = int(dt_c.timestamp())
                         parsed.append({
                             "date": dt_c.strftime("%Y-%m-%d"),
                             "time": dt_c.strftime("%H:%M"),
@@ -1111,7 +1132,7 @@ def get_symbol_candles(symbol: str):
                             "high": float(c[2]),
                             "low": float(c[3]),
                             "close": float(c[4]),
-                            "volume": int(c[5])
+                            "volume": int(float(c[5] or 0))
                         })
                     # Prefer latest date with substantial session bars (>= 15 bars) or latest date overall
                     date_counts: Dict[str, int] = {}
