@@ -25,6 +25,7 @@ class GapOrbTrendStrategy:
         max_gap_pct: float = 0.12,
         max_atr14_pct: float = 0.035,
         min_rvol: float = 1.80,
+        min_liquidity_score: float = 45.0,
         stop_pct: float = 0.012,
         risk_pct: float = 0.016,
         max_leverage: float = 1.58,
@@ -35,6 +36,7 @@ class GapOrbTrendStrategy:
         self.max_gap_pct = float(max_gap_pct)
         self.max_atr14_pct = float(max_atr14_pct)
         self.min_rvol = float(min_rvol)
+        self.min_liquidity_score = float(min_liquidity_score)
         self.stop_pct = float(stop_pct)
         self.risk_pct = float(risk_pct)
         self.max_leverage = float(max_leverage)
@@ -104,6 +106,9 @@ class GapOrbTrendStrategy:
             bar_count = int(d.get("bar_count") or 0)
 
             if d_open <= 0.0 or ltp <= 0.0 or vwap <= 0.0 or bar_count < 10 or rvol < self.min_rvol:
+                continue
+            liq_score = d.get("liquidity_score")
+            if liq_score is not None and float(liq_score) < self.min_liquidity_score:
                 continue
 
             gap = (d_open - prev_c) / prev_c

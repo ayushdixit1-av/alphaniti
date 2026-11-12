@@ -483,7 +483,8 @@ def _load_nifty_macro_context(
         except Exception:
             pass
 
-    if not daily_rows and groww_client is not None:
+    max_pkl_date = max((r[0] for r in daily_rows), default="")
+    if (not daily_rows or max_pkl_date < target_date) and groww_client is not None:
         start_d = (datetime.date.fromisoformat(target_date) - datetime.timedelta(days=50)).strftime("%Y-%m-%d")
         raw_d = _fetch_groww_candles_for_range(
             groww_client,
@@ -492,17 +493,21 @@ def _load_nifty_macro_context(
             f"{target_date} 15:30:00",
             interval="1day",
         )
-        daily_rows = _parse_groww_daily_candles(raw_d)
+        daily_rows.extend(_parse_groww_daily_candles(raw_d))
 
-    if not daily_rows:
+    max_row_date = max((r[0] for r in daily_rows), default="")
+    if not daily_rows or max_row_date < target_date:
         try:
             import yfinance as yf
             df_n = yf.download("^NSEI", period="3mo", interval="1d", progress=False, auto_adjust=True)
             if df_n is not None and not df_n.empty:
                 if hasattr(df_n.columns, "levels"):
                     df_n.columns = [c[0] if isinstance(c, tuple) else c for c in df_n.columns]
+                existing_dates = {r[0] for r in daily_rows}
                 for idx, r in df_n.iterrows():
-                    daily_rows.append((idx.strftime("%Y-%m-%d"), float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"])))
+                    ds = idx.strftime("%Y-%m-%d")
+                    if ds not in existing_dates:
+                        daily_rows.append((ds, float(r["Open"]), float(r["High"]), float(r["Low"]), float(r["Close"])))
         except Exception:
             pass
 

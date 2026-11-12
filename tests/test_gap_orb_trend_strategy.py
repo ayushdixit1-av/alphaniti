@@ -67,6 +67,18 @@ def test_gap_orb_filters_splits_extreme_atr_and_countertrend():
     )
     assert sig_split is None
 
+    # 3b) Thin order-book liquidity factor (< 45) blocks entry even when RVOL & gap pass
+    thin_md = {
+        "RELIANCE": {**base_md["RELIANCE"], "liquidity_score": 22.0}
+    }
+    sig_thin = strat.evaluate_universe(
+        time_min=580, market_data=thin_md,
+        daily_context={"RELIANCE": {"prev_close": 1000.0, "atr14_pct": 0.022}},
+        nifty_prev_close=24300.0, nifty_sma20=24000.0, nifty_ret_pct=0.004,
+        breadth_pct=70.0, equity=10000.0,
+    )
+    assert sig_thin is None
+
     # 4) Valid aligned Long setup passes with <= 1.6% risk & <= 1.58x leverage
     sig_ok = strat.evaluate_universe(
         time_min=580, market_data=base_md,
@@ -132,3 +144,14 @@ def test_daemon_a8_10k_eod_hold_beats_groww_without_choking(tmp_path):
     closed = daemon.state["trade_history"][-1]
     assert closed["net_pnl"] > 250.0
     assert closed["fees"] > 0.0
+
+
+def test_update_symbol_micro_emits_liquidity_score_and_causal_prev_close(tmp_path):
+    daemon = LiveStrategyDaemon(runtime_dir=tmp_path, capital=10000.0)
+    t0 = datetime(2026, 11, 12, 9, 15, tzinfo=IST)
+    m0 = daemon._update_symbol_micro("RELIANCE", 1340.0, 50000, 1342.0, 1335.0, now=t0)
+    m1 = daemon._update_symbol_micro("RELIANCE", 1345.0, 90000, 1346.0, 1335.0, now=t0 + timedelta(minutes=1))
+    assert 0.0 <= m1["liquidity_score"] <= 100.0
+    assert m1["turnover_lakhs"] > 0.0
+    assert m1["amihud_impact"] >= 0.0
+    assert m0["vwap"] > 0.0
